@@ -1,0 +1,46 @@
+# Namespaces for the capstone.
+# Pattern: one namespace per tier, plus a -system namespace for any
+# cluster-scoped infrastructure (admission webhooks, cert-manager, etc).
+#
+# Why -system namespaces? See lab 05: admission policies need to
+# exclude their own namespace, otherwise the webhook can't recreate
+# itself. We use capstone-system for the admission webhook later.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capstone
+  labels:
+    purpose: capstone
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capstone-frontend
+  labels:
+    purpose: capstone
+    tier: frontend
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capstone-backend
+  labels:
+    purpose: capstone
+    tier: backend
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capstone-postgres
+  labels:
+    purpose: capstone
+    tier: data
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capstone-system
+  labels:
+    purpose: capstone
+    workload: "true"

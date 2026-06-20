@@ -1,0 +1,28 @@
+# Deliberately broken manifest — exercises 02.
+#
+# This manifest deploys a pod WITHOUT a securityContext. The capstone
+# admission webhook rejects it (as you'd hope) — but only because we
+# designed the policy to catch this case. Apply it and observe:
+#
+# To apply (during the exercise):
+#   kubectl -n capstone-frontend apply -f broken-manifests/root-pod.yaml
+#
+# What you'll see: kubectl returns an error from the admission webhook,
+# the pod never reaches etcd, and there's no resource to clean up.
+# That's the desired behavior — but the lesson is that the policy is
+# what caught it, not the apiserver's defaults.
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: root-pod
+  namespace: capstone-frontend
+  labels:
+    app: root-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    # No securityContext at all — the admission webhook should reject.
+    ports:
+    - containerPort: 8080

@@ -1,0 +1,87 @@
+# Deliberately broken manifest — exercises 01.
+#
+# This manifest deploys a backend WITHOUT a PodDisruptionBudget.
+# Apply it in capstone-backend namespace and watch what happens during
+# a node drain: the backend can lose BOTH replicas simultaneously,
+# taking the service down for the duration of the drain.
+#
+# Used by: exercises/01-rolling-update-with-pdb.md
+#
+# To apply (during the exercise):
+#   kubectl -n capstone-backend apply -f broken-manifests/no-pdb.yaml
+#   kubectl -n capstone-backend scale deployment/backend --replicas=4
+#     # (scale up so the comparison is fair)
+#   kubectl drain prod-lab-worker --ignore-daemonsets --delete-emptydir-data --timeout=60s
+#
+# What you'll see: drain succeeds almost instantly (no PDB to gate it),
+# backend has 0 replicas during the few seconds it takes the new pod
+# to start on a different worker.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend-no-pdb
+  namespace: capstone-backend
+  labels:
+    app: backend
+    variant: no-pdb   # so it doesn't collide with the capstone backend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+      variant: no-pdb
+  template:
+    metadata:
+      labels:
+        app: backend
+        variant: no-pdb
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: backend
+            variant: no-pdb
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:1.27
+        ports:
+        - containerPort: 8080
+          name: http
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: run
+          mountPath: /var/run
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+---
+# NOTE: no PodDisruptionBudget for backend-no-pdb — that's the point
+# of this exercise. Compare against capstone-backend/backend which has
+# minAvailable: 1.

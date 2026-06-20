@@ -1,0 +1,150 @@
+# Postgres tier.
+#
+# Defends against: StatefulSet losing a zone (lab 04), and resource
+# starvation / noisy-neighbor (lab 03).
+#
+# Key choices:
+#   - StatefulSet (not Deployment): stable network identity, ordered
+#     scaling, one PVC per pod that follows the pod across reschedules.
+#   - Headless Service (clusterIP: None): lets the StatefulSet pods
+#     address each other by DNS name (postgres-0.postgres, etc.).
+#   - storageClassName: standard (kind's local-path, WaitForFirstConsumer).
+#     This is the SAFE default — see lab 04. If you accidentally point
+#     this at an Immediate-mode SC, the PVC binds to a zone BEFORE the
+#     pod schedules, and a topology-constrained pod gets stuck Pending
+#     forever.
+#   - Resources: explicit requests so the scheduler reserves capacity
+#     and noisy neighbors can't starve the DB. No limits — Postgres
+#     manages its own memory; capping it at the kubelet level can cause
+#     OOM kills mid-transaction.
+#   - 1 replica: for the capstone. In production you'd run 3 replicas
+#     with replication (Patroni, Stolon, or cloud-managed) — but that
+#     adds a whole layer that's beyond what we want to test here.
+#   - Secret with a generated password: never put passwords in plain
+#     YAML. For the capstone we use a fixed string; in production
+#     generate it with `kubectl create secret` or a sealed-secrets
+#     controller.
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgres-credentials
+  namespace: capstone-postgres
+type: Opaque
+stringData:
+  # In production: generate with `openssl rand -base64 32` and inject
+  # via your secret manager. Hardcoded here so the capstone deploys
+  # without external dependencies.
+  POSTGRES_PASSWORD: capstone-dev-password-change-me
+  POSTGRES_USER: postgres
+  POSTGRES_DB: capstone
+---
+# Headless Service — StatefulSet pods need stable DNS names
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: capstone-postgres
+spec:
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+    name: postgres
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+  namespace: capstone-postgres
+  labels:
+    app: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        # fsGroup + fsGroupChangePolicy=OnRootMismatch: the kubelet
+        # chowns the volume root to GID 999 on first mount. Postgres
+        # will see the dir is owned correctly and skip its own
+        # permission fix-up, which would fail as non-root.
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: postgres
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+          name: postgres
+        envFrom:
+        - secretRef:
+            name: postgres-credentials
+        # PGDATA points postgres at /var/lib/postgresql/data/pgdata,
+        # which is a *subdirectory* of the mounted volume. The kubelet
+        # chowns the volume root; postgres creates pgdata inside and
+        # owns it from the start, avoiding the chown-as-non-root error.
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres"]
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "postgres"]
+          periodSeconds: 30
+          failureThreshold: 3
+          initialDelaySeconds: 60
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          # No limits on memory: Postgres manages its own buffers and
+          # shared memory, and a kubelet OOM-kill mid-transaction
+          # corrupts the WAL. CPU limit is set so a runaway query
+          # can't starve the cluster.
+          limits:
+            cpu: 1000m
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  # volumeClaimTemplate: one PVC per pod, follows the pod across
+  # reschedules. StorageClass "standard" is kind's local-path, which
+  # is WaitForFirstConsumer — see lab 04.
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: standard
+      resources:
+        requests:
+          storage: 1Gi

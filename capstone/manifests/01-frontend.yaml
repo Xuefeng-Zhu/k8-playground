@@ -1,0 +1,154 @@
+# Frontend tier.
+#
+# Defends against: graceful shutdown during rolling updates / drains
+# (lab 01).
+#
+# Key choices:
+#   - terminationGracePeriodSeconds: 30  (default, but explicit)
+#   - preStop hook: sleep 5  (gives the Service / Ingress time to
+#                              deregister before SIGTERM)
+#   - readinessProbe distinct from livenessProbe (a 500 doesn't kill
+#                              the pod, but does remove it from the
+#                              Service endpoints)
+#   - resources: requests AND limits set (so the scheduler reserves
+#                              capacity, and the kubelet can OOM-kill
+#                              at a known threshold)
+#   - topologySpreadConstraints across hostname (so replicas don't all
+#                              land on the same worker)
+#   - securityContext: runAsNonRoot, no privilege escalation, all
+#                              capabilities dropped (lab 05 territory)
+#
+# Reachable at http://localhost:18080 (port 18080 is mapped from the
+# kind control plane's port 80, see cluster.yaml).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: capstone-frontend
+  labels:
+    app: frontend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0       # lab 01: never have 0 replicas serving
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      terminationGracePeriodSeconds: 30
+      # Lab 05: explicit non-root securityContext. The admission
+      # webhook in 04-network-policies.yaml + admission requires this.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: frontend
+      containers:
+      - name: nginx
+        # Use the unprivileged nginx image — designed to run as non-root,
+        # bind to port 8080 (not 80), and not write to /etc/nginx on
+        # startup. Plain nginx:1.27 won't start as non-root.
+        image: nginxinc/nginx-unprivileged:1.27
+        ports:
+        - containerPort: 8080
+          name: http
+        # lab 02 connection: readiness != liveness. readiness failing
+        # removes from Service endpoints; liveness failing kills the pod.
+        # A pod that's slow but alive should serve traffic, not be killed.
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          periodSeconds: 5
+          failureThreshold: 2
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          periodSeconds: 30
+          failureThreshold: 3
+          initialDelaySeconds: 30
+        # lab 01: preStop hook gives the load balancer time to
+        # deregister this pod before nginx starts refusing connections.
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - "sleep 5"
+        # lab 03: explicit requests so the scheduler reserves capacity.
+        # Limits are higher than requests so a brief spike is tolerated,
+        # but the pod can be OOM-killed if it really misbehaves.
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: run
+          mountPath: /var/run
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: capstone-frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 8080   # matches the unprivileged nginx containerPort
+  type: ClusterIP
+---
+# NodePort + the kind port mapping (18080:80) gives us external access
+# without needing an Ingress controller. If you install ingress-nginx
+# later, replace this with an Ingress resource.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-external
+  namespace: capstone-frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 8080
+    nodePort: 30080
+  type: NodePort

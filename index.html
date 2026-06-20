@@ -1,0 +1,2098 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kubernetes in Production — Architecture & Design Reference</title>
+<style>
+  /* ───── Reset ───── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; scroll-padding-top: 80px; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif;
+    background: #0d1117;
+    color: #c9d1d9;
+    line-height: 1.65;
+    font-size: 16px;
+    min-height: 100vh;
+  }
+
+  /* ───── Layout ───── */
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    min-height: 100vh;
+  }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { position: static !important; height: auto !important; border-right: none !important; border-bottom: 1px solid #21262d; }
+  }
+
+  /* ───── Sidebar ───── */
+  .sidebar {
+    background: #010409;
+    border-right: 1px solid #21262d;
+    padding: 24px 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+  }
+  .brand {
+    padding: 0 24px 24px;
+    border-bottom: 1px solid #21262d;
+    margin-bottom: 16px;
+  }
+  .brand-title {
+    font-size: 18px;
+    font-weight: 700;
+    color: #f0f6fc;
+    margin-bottom: 4px;
+  }
+  .brand-subtitle {
+    font-size: 12px;
+    color: #8b949e;
+    line-height: 1.4;
+  }
+  .brand-kbd {
+    display: inline-block;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 1px 6px;
+    font-size: 11px;
+    color: #c9d1d9;
+    font-family: ui-monospace, "SF Mono", monospace;
+  }
+  .search-box {
+    margin: 0 16px 16px;
+    position: relative;
+  }
+  .search-input {
+    width: 100%;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 8px 12px 8px 32px;
+    color: #c9d1d9;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .search-input:focus {
+    outline: none;
+    border-color: #58a6ff;
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  }
+  .search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #8b949e;
+    pointer-events: none;
+    font-size: 13px;
+  }
+  .nav-list {
+    list-style: none;
+    padding: 0;
+  }
+  .nav-section {
+    margin-bottom: 4px;
+  }
+  .nav-link {
+    display: flex;
+    align-items: center;
+    padding: 7px 24px;
+    color: #8b949e;
+    text-decoration: none;
+    font-size: 13px;
+    border-left: 2px solid transparent;
+    transition: all 0.15s;
+  }
+  .nav-link:hover {
+    background: #161b22;
+    color: #c9d1d9;
+  }
+  .nav-link.active {
+    background: #161b22;
+    color: #58a6ff;
+    border-left-color: #58a6ff;
+  }
+  .nav-num {
+    display: inline-block;
+    min-width: 26px;
+    color: #6e7681;
+    font-family: ui-monospace, "SF Mono", monospace;
+    font-size: 11px;
+  }
+  .nav-link.active .nav-num { color: #58a6ff; }
+  .nav-label { flex: 1; }
+  .nav-tag {
+    font-size: 10px;
+    color: #6e7681;
+    background: #161b22;
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 6px;
+  }
+
+  /* ───── Main ───── */
+  .main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 48px 56px 96px;
+  }
+  @media (max-width: 600px) {
+    .main { padding: 24px 20px 64px; }
+  }
+
+  /* ───── Typography ───── */
+  h1, h2, h3, h4 { color: #f0f6fc; line-height: 1.25; }
+  h1 { font-size: 36px; font-weight: 800; margin-bottom: 12px; letter-spacing: -0.5px; }
+  h2 {
+    font-size: 26px;
+    font-weight: 700;
+    margin: 48px 0 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #21262d;
+  }
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 32px 0 12px;
+    color: #e6edf3;
+  }
+  h4 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 24px 0 8px;
+    color: #e6edf3;
+  }
+  p { margin: 12px 0; color: #c9d1d9; }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  strong { color: #f0f6fc; }
+  em { color: #c9d1d9; }
+  ul, ol { padding-left: 24px; margin: 12px 0; }
+  li { margin: 4px 0; }
+  hr {
+    border: none;
+    border-top: 1px solid #21262d;
+    margin: 32px 0;
+  }
+  blockquote {
+    border-left: 3px solid #58a6ff;
+    background: #161b22;
+    padding: 12px 18px;
+    margin: 16px 0;
+    color: #c9d1d9;
+    border-radius: 0 6px 6px 0;
+  }
+  blockquote p { margin: 4px 0; }
+
+  /* ───── Header ───── */
+  .doc-header {
+    margin-bottom: 32px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid #21262d;
+  }
+  .doc-meta {
+    font-size: 12px;
+    color: #6e7681;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 8px;
+  }
+  .doc-tagline {
+    font-size: 16px;
+    color: #8b949e;
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+  .doc-pill {
+    display: inline-block;
+    background: #1f6feb22;
+    color: #79c0ff;
+    border: 1px solid #1f6feb55;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    margin-right: 6px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  /* ───── Tables ───── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 14px;
+  }
+  thead { background: #161b22; }
+  th {
+    text-align: left;
+    padding: 10px 14px;
+    color: #f0f6fc;
+    font-weight: 600;
+    border-bottom: 1px solid #30363d;
+  }
+  td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #21262d;
+    vertical-align: top;
+  }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: #161b22; }
+
+  /* ───── Code ───── */
+  code {
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", monospace;
+    font-size: 0.9em;
+    background: #161b22;
+    color: #ff7b72;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #21262d;
+  }
+  pre {
+    background: #010409;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 16px 20px;
+    overflow-x: auto;
+    margin: 16px 0;
+    line-height: 1.55;
+    font-size: 13px;
+  }
+  pre code {
+    background: transparent;
+    border: none;
+    padding: 0;
+    color: #c9d1d9;
+    font-size: inherit;
+  }
+  /* JSON/YAML syntax in code blocks */
+  pre .k { color: #ff7b72; }    /* yaml key */
+  pre .s { color: #a5d6ff; }    /* string */
+  pre .n { color: #79c0ff; }    /* number */
+  pre .c { color: #8b949e; font-style: italic; } /* comment */
+  pre .b { color: #d2a8ff; }    /* boolean */
+  pre .y { color: #ffa657; }    /* yaml doc/sep */
+
+  /* ───── Callouts ───── */
+  .callout {
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 16px 0;
+    border-left: 4px solid;
+    background: #161b22;
+  }
+  .callout-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: #f0f6fc;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout-prod { border-color: #f85149; }
+  .callout-prod .callout-title { color: #ff7b72; }
+  .callout-rule { border-color: #58a6ff; }
+  .callout-rule .callout-title { color: #79c0ff; }
+  .callout-decision { border-color: #d2a8ff; }
+  .callout-decision .callout-title { color: #d2a8ff; }
+  .callout-hint { border-color: #3fb950; }
+  .callout-hint .callout-title { color: #56d364; }
+
+  /* ───── Mermaid ───── */
+  .mermaid {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 0;
+    overflow-x: auto;
+    text-align: center;
+  }
+
+  /* ───── Footer ───── */
+  .doc-footer {
+    margin-top: 64px;
+    padding-top: 24px;
+    border-top: 1px solid #21262d;
+    font-size: 13px;
+    color: #6e7681;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .back-to-top {
+    background: #161b22;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 4px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .back-to-top:hover { background: #21262d; }
+
+  /* ───── Print ───── */
+  @media print {
+    .sidebar { display: none; }
+    .layout { grid-template-columns: 1fr; }
+    .main { max-width: none; padding: 24px; }
+    body { background: white; color: black; }
+    h1, h2, h3, h4 { color: black; }
+    pre { background: #f6f8fa; color: black; border-color: #d0d7de; }
+    code { background: #f6f8fa; color: black; }
+    table { background: white; }
+  }
+</style>
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-title">K8s in Production</div>
+      <div class="brand-subtitle">Architecture & design reference<br><span class="brand-kbd">/</span> search <span class="brand-kbd">Ctrl K</span></div>
+    </div>
+    <div class="search-box">
+      <span class="search-icon">⌕</span>
+      <input type="text" id="search" class="search-input" placeholder="Filter sections…">
+    </div>
+    <ul class="nav-list" id="nav">
+      <li class="nav-section"><a class="nav-link" href="#overview"><span class="nav-num">00</span><span class="nav-label">Overview</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#i-foundations"><span class="nav-num">I</span><span class="nav-label">Foundations</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#ii-control-plane"><span class="nav-num">II</span><span class="nav-label">Control Plane</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#iii-networking"><span class="nav-num">III</span><span class="nav-label">Networking</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#iv-workloads"><span class="nav-num">IV</span><span class="nav-label">Workloads & Scaling</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#v-storage"><span class="nav-num">V</span><span class="nav-label">Storage</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#vi-security"><span class="nav-num">VI</span><span class="nav-label">Security</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#vii-gitops"><span class="nav-num">VII</span><span class="nav-label">GitOps & CD</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#viii-observability"><span class="nav-num">VIII</span><span class="nav-label">Observability</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#ix-reliability"><span class="nav-num">IX</span><span class="nav-label">Reliability & Day-2</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#x-multi-cluster"><span class="nav-num">X</span><span class="nav-label">Multi-Cluster</span></a></li>
+      <li class="nav-section"><a class="nav-link" href="#xi-decisions"><span class="nav-num">XI</span><span class="nav-label">Decision Framework</span></a></li>
+    </ul>
+  </aside>
+
+  <main class="main">
+
+    <article id="overview">
+      <header class="doc-header">
+        <div class="doc-meta">
+          <span class="doc-pill">Reference</span>
+          <span class="doc-pill">Production</span>
+          <span class="doc-pill">Architecture</span>
+        </div>
+        <h1>Kubernetes in Production</h1>
+        <p class="doc-tagline">An architecture &amp; design deep-dive for engineers running Kubernetes with paying customers on it. Optimised for people who already know what a Pod is and want to understand how the pieces fit together under load, on call, and during incidents.</p>
+      </header>
+
+      <h2>How to read this</h2>
+      <ol>
+        <li><strong>Read Parts I–III linearly</strong> if you're new to internals. They form the mental model everything else depends on.</li>
+        <li><strong>Parts IV–X are reference.</strong> Jump to what you're building or breaking.</li>
+        <li><strong>Part XI is the field guide</strong> — pull it out during RFCs or design reviews.</li>
+      </ol>
+      <p>Every section ends with <strong>production failure modes</strong>, a <strong>decision table</strong>, and links to <strong>primary sources</strong>.</p>
+
+      <h2>Conventions</h2>
+      <ul>
+        <li>Commands assume <code>kubectl</code> ≥ v1.28 and a cluster with RBAC enabled.</li>
+        <li>"Production" means: paying customers on it, ≥ 99.9% SLO, on-call rotation attached.</li>
+        <li>"Should" is "do this unless you can articulate why not." "Must" is non-negotiable.</li>
+      </ul>
+
+      <h2>Table of contents</h2>
+      <table>
+        <thead><tr><th>Part</th><th>Topic</th><th>Why it matters in prod</th></tr></thead>
+        <tbody>
+          <tr><td><a href="#i-foundations">I</a></td><td>Foundations &amp; mental models</td><td>Decide what Kubernetes is — and isn't — before buying in</td></tr>
+          <tr><td><a href="#ii-control-plane">II</a></td><td>Control plane internals</td><td>Know what runs your cluster, why kube-apiserver is the chokepoint</td></tr>
+          <tr><td><a href="#iii-networking">III</a></td><td>Networking</td><td>The most misunderstood surface; where most outages begin</td></tr>
+          <tr><td><a href="#iv-workloads">IV</a></td><td>Workloads &amp; scaling</td><td>Deployments, autoscaling, and the contracts you break when you skip them</td></tr>
+          <tr><td><a href="#v-storage">V</a></td><td>Storage</td><td>Volumes, PVCs, CSI, and the durability story that bites you during node loss</td></tr>
+          <tr><td><a href="#vi-security">VI</a></td><td>Security</td><td>RBAC, ServiceAccounts, secrets, supply chain, runtime</td></tr>
+          <tr><td><a href="#vii-gitops">VII</a></td><td>GitOps &amp; CD</td><td>Why declarative + Git-sourced wins, and how Argo/Flux actually work</td></tr>
+          <tr><td><a href="#viii-observability">VIII</a></td><td>Observability</td><td>Metrics, logs, traces, events — and the four signals you must wire first</td></tr>
+          <tr><td><a href="#ix-reliability">IX</a></td><td>Reliability &amp; day-2</td><td>Upgrades, backups, DR, chaos, the on-call reality</td></tr>
+          <tr><td><a href="#x-multi-cluster">X</a></td><td>Multi-cluster &amp; federation</td><td>When one cluster is enough, and the patterns when it isn't</td></tr>
+          <tr><td><a href="#xi-decisions">XI</a></td><td>Production decision framework</td><td>Maturity model, RFC checklists, the questions to ask before each choice</td></tr>
+        </tbody>
+      </table>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART I ════════════════ -->
+    <article id="i-foundations">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part I</span></div>
+        <h1>Foundations &amp; Mental Models</h1>
+        <p class="doc-tagline">Before you run anything in production, internalise what Kubernetes is, what it deliberately is <em>not</em>, and the contracts your workloads are signing up for.</p>
+      </header>
+
+      <h2>1.1 What Kubernetes actually is</h2>
+      <p>Kubernetes is a <strong>declarative, eventually-consistent cluster manager</strong> with:</p>
+      <ul>
+        <li>A <strong>control plane</strong> that observes the cluster's actual state and reconciles it toward a desired state.</li>
+        <li>An <strong>API server</strong> as the single mutation surface — every read and write flows through it.</li>
+        <li>A <strong>scheduler</strong> that assigns workloads to nodes based on constraints and resources.</li>
+        <li>A <strong>set of controllers</strong> that each watch a slice of the API and drive state to match spec.</li>
+        <li>A <strong>CNI plugin</strong> that wires networking; a <strong>CSI plugin</strong> that wires storage; a <strong>CRI runtime</strong> that runs containers.</li>
+      </ul>
+      <p>That's it. Everything else (Ingress, Service mesh, autoscaling, GitOps) is built on top of these primitives by you, by projects, or by your cloud provider.</p>
+
+      <div class="mermaid">
+flowchart TB
+    A["Declarative spec (YAML)<br/>'I want 3 replicas of this image running'"] -->|submitted via API| B["kube-apiserver<br/>validation, authn, authz, audit"]
+    B -->|persists to etcd| C["Controllers (the brains)<br/>ReplicaSet, Deployment, StatefulSet..."]
+    C -->|"watch spec vs reality → call API to converge"| D["Nodes &amp; kubelet<br/>'apiserver said run this → I run it'"]
+    style A fill:#1f6feb22,stroke:#58a6ff,color:#c9d1d9
+    style B fill:#d2a8ff22,stroke:#d2a8ff,color:#c9d1d9
+    style C fill:#3fb95022,stroke:#3fb950,color:#c9d1d9
+    style D fill:#f8514922,stroke:#f85149,color:#c9d1d9
+      </div>
+
+      <div class="callout callout-rule">
+        <div class="callout-title">The most important fact</div>
+        <p>The cluster is <em>eventually consistent</em>. There is no synchronous "deploy complete" event. There is only "spec submitted" and "spec observed" — and you choose how to interpret the gap.</p>
+      </div>
+
+      <h2>1.2 What Kubernetes is <em>not</em></h2>
+      <table>
+        <thead><tr><th>It's NOT</th><th>What you'll trip over</th></tr></thead>
+        <tbody>
+          <tr><td>A deployment system for VMs</td><td>Pods are cattle, not pets. Long-running stateful services need extra plumbing.</td></tr>
+          <tr><td>A platform</td><td>It's a substrate. The platform (builds, releases, secrets, observability, policy) is what you build on top.</td></tr>
+          <tr><td>Self-healing for everything</td><td>It restarts Pods. It does not retry in-flight requests, drain queues, or fix bad config.</td></tr>
+          <tr><td>A database</td><td>etcd is a database, but your workloads don't get transactions across Pods and the API server.</td></tr>
+          <tr><td>Secure by default</td><td>EKS/GKE/AKS apply some sane defaults. Self-managed clusters require explicit hardening.</td></tr>
+          <tr><td>A scheduler for batch jobs (out of the box)</td><td><code>kube-scheduler</code> schedules Pods. Job queues, cron, DAGs need Volcano, Argo Workflows, Kueue.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>1.3 The three contracts you sign when you adopt it</h2>
+      <ol>
+        <li><strong>Pod lifecycle contract.</strong> Pods are mortal. IPs change. Disks attached via <code>emptyDir</code> vanish on restart. Files in the container's writable layer vanish with the container.</li>
+        <li><strong>Control plane as single point of mutation.</strong> You don't SSH to nodes and edit state. You don't write files to <code>/etc/kubernetes/</code>. You talk to the API server.</li>
+        <li><strong>Eventually consistent reconciliation.</strong> "3 replicas" means "the controller will keep working to make 3 replicas exist." Treat <code>kubectl get</code> as a snapshot, not a fact.</li>
+      </ol>
+
+      <h2>1.4 The shape of a production cluster</h2>
+      <div class="mermaid">
+flowchart TB
+    subgraph CP["CONTROL PLANE"]
+        APISERVER["kube-apiserver"]
+        SCHED["kube-scheduler"]
+        CMGR["controller-manager"]
+        ETCD[("etcd<br/>Raft quorum")]
+    end
+    subgraph NA["NODE A"]
+        KA["kubelet · kube-proxy · runtime"]
+        PA["Pod · Pod · Pod"]
+    end
+    subgraph NB["NODE B"]
+        KB["kubelet · kube-proxy · runtime"]
+        PB["Pod · Pod"]
+    end
+    APISERVER --- ETCD
+    APISERVER -.-> SCHED
+    APISERVER -.-> CMGR
+    APISERVER --> KA
+    APISERVER --> KB
+    KA --- PA
+    KB --- PB
+    style CP fill:#1f6feb15,stroke:#58a6ff
+    style NA fill:#3fb95015,stroke:#3fb950
+    style NB fill:#3fb95015,stroke:#3fb950
+      </div>
+
+      <h2>1.5 Workload objects — the core vocabulary</h2>
+      <table>
+        <thead><tr><th>Object</th><th>Lifetime</th><th>Use it for</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Pod</strong></td><td>Ephemeral</td><td>One or more co-scheduled containers sharing network and volumes</td></tr>
+          <tr><td><strong>Deployment</strong></td><td>Long</td><td>Stateless services; manages a ReplicaSet, supports rolling updates</td></tr>
+          <tr><td><strong>StatefulSet</strong></td><td>Long</td><td>Stable identity, stable storage, ordered scaling (databases, queues)</td></tr>
+          <tr><td><strong>DaemonSet</strong></td><td>Node-bound</td><td>One Pod per node (logging agents, CNI, node-local caches)</td></tr>
+          <tr><td><strong>Job</strong></td><td>Finite</td><td>Run-to-completion batch work</td></tr>
+          <tr><td><strong>CronJob</strong></td><td>Scheduled</td><td>Time-triggered Jobs</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Rule of thumb</div><p>Start with Deployment. Move to StatefulSet only when you need stable network IDs or per-replica storage. Reach for DaemonSet for node-level agents.</p></div>
+
+      <h2>1.6 Service discovery and the IP story</h2>
+      <div class="mermaid">
+flowchart LR
+    C[client] --> S["Service ClusterIP:80"]
+    S --> KP["kube-proxy<br/>iptables / IPVS / eBPF"]
+    KP --> A[Pod A<br/>10.244.1.5]
+    KP --> B[Pod B<br/>10.244.2.7]
+    KP --> D[Pod C<br/>10.244.3.2]
+    style S fill:#d2a8ff22,stroke:#d2a8ff
+    style KP fill:#1f6feb22,stroke:#58a6ff
+      </div>
+      <p>Every Pod gets an IP. <code>Service</code> objects give you a stable virtual IP that load-balances across a set of Pods selected by labels. The Pod IPs are real, routable across the cluster; Service IPs are virtual — they only exist because every node's data plane knows about them.</p>
+
+      <h2>1.7 Production failure modes</h2>
+      <ul>
+        <li>Treating the cluster like a server (SSH, hand-edits, <code>docker run</code>). The control plane will eventually revert it, often silently.</li>
+        <li>Designing apps that need stable IPs or stable hostnames.</li>
+        <li>Assuming synchrony: <code>kubectl apply</code> returning is not the same as Pods running.</li>
+        <li>Mixing concerns in one Pod. A Pod is a unit of co-scheduling, not a VM.</li>
+      </ul>
+
+      <h2>1.8 Decision table — when <em>not</em> to use Kubernetes</h2>
+      <table>
+        <thead><tr><th>Situation</th><th>Better alternative</th></tr></thead>
+        <tbody>
+          <tr><td>3 long-running services, no need to scale</td><td>VMs or PaaS (Fly, Railway, ECS Fargate, Cloud Run)</td></tr>
+          <tr><td>Batch jobs that don't need cluster scheduling</td><td>Lambda, Cloud Functions, dedicated batch services</td></tr>
+          <tr><td>Latency-sensitive single binary</td><td>Bare metal / single VM</td></tr>
+          <tr><td>ML training that doesn't need scheduling</td><td>Dedicated GPU cluster (RunPod, Lambda Cloud)</td></tr>
+        </tbody>
+      </table>
+
+      <h2>1.9 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/docs/concepts/overview/components/">Kubernetes Components</a></li>
+        <li><a href="https://kubernetes.io/docs/reference/using-api/api-concepts/">Kubernetes API Concepts</a></li>
+        <li><a href="https://github.com/kelseyhightower/kubernetes-the-hard-way">Kubernetes The Hard Way</a> — Kelsey Hightower</li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART II ════════════════ -->
+    <article id="ii-control-plane">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part II</span></div>
+        <h1>Control Plane Internals</h1>
+        <p class="doc-tagline">If Part I was about contracts, this part is about who's enforcing them.</p>
+      </header>
+
+      <h2>2.1 Components</h2>
+
+      <h3>kube-apiserver</h3>
+      <p>The front door. Every <code>kubectl</code>, every controller reconciliation, every kubelet heartbeat flows through it. Stateless and horizontally scalable. <strong>In production you run 2 or 3 instances behind a load balancer.</strong></p>
+      <p>It is the chokepoint. Every pathological condition (slow controllers, runaway admission webhooks, debug loops calling the API) manifests here first.</p>
+
+      <h3>etcd</h3>
+      <p>Distributed KV store using Raft consensus. Holds the cluster state. <strong>The cluster's source of truth.</strong></p>
+      <ul>
+        <li>Slow disk = slow etcd = slow cluster. Use SSDs; ideally dedicated NVMe with low fsync latency.</li>
+        <li>Backing up etcd is backing up the cluster. <code>etcdctl snapshot save</code> cadence determines your RPO.</li>
+        <li>Writes go through Raft, so they cost network round-trips to a majority.</li>
+        <li>Default object size limit: <strong>1.5 MiB</strong>. Push big data to object storage, not K8s objects.</li>
+      </ul>
+      <div class="callout callout-rule"><div class="callout-title">Production rule</div><p>Never co-locate workloads on control-plane nodes (unless your distro mandates it and you understand the consequences).</p></div>
+
+      <h3>kube-scheduler</h3>
+      <p>Two phases: <strong>filtering</strong> (drop impossible nodes) and <strong>scoring</strong> (rank survivors). Scheduling is <strong>not retroactive</strong> — a Pod that becomes unschedulable after admission stays unschedulable until something changes.</p>
+
+      <h3>kube-controller-manager</h3>
+      <p>One binary that runs dozens of controllers in one process: ReplicaSet, Deployment, StatefulSet, Job, NodeLifecycle, ServiceAccount, Token, EndpointSlice, GarbageCollection, etc.</p>
+      <p>Each controller is an independent reconciliation loop:</p>
+      <pre><code>for {
+    desired := getSpec()
+    actual := getStatus()
+    if !reflect.DeepEqual(desired, actual) {
+        patch := computePatch(desired, actual)
+        client.Patch(patch)
+    }
+    sleep(someInterval)
+    // OR: event-driven via informers + workqueue
+}</code></pre>
+
+      <h2>2.2 The control loop pattern</h2>
+      <div class="callout callout-prod"><div class="callout-title">Why this matters in production</div><p>Reconciliation loops can thrash. If your controller has a bug that flips a field back and forth, you'll see API server load climb without visible user action. Rate-limited retries on errors are not optional — a controller that calls the API in a tight loop during a transient outage will get itself throttled, then ignored.</p></div>
+
+      <h2>2.3 The API server in detail</h2>
+      <div class="mermaid">
+flowchart LR
+    K[kubectl/client] --> A[kube-apiserver]
+    A --> AU[Authentication<br/>authn]
+    A --> AM[Mutating admission]
+    A --> AV[Validation<br/>schema]
+    AM --> AV
+    AV --> VA[Validating admission]
+    VA --> ET[etcd write]
+    ET --> W[object available to watchers]
+    style A fill:#d2a8ff22,stroke:#d2a8ff
+      </div>
+
+      <h3>Authentication</h3>
+      <p>Order matters; first to claim an identity wins. Common: X.509 client certs, bearer tokens (SA JWTs / OIDC), webhook token authenticators.</p>
+
+      <h3>Authorisation</h3>
+      <p>After authn, every request is checked. <strong>RBAC is the default and the right answer.</strong> The authoriser chain: first to deny wins; if all allow, request proceeds. Be careful with Webhook authorsers that timeout — a slow policy decision is a security hole.</p>
+
+      <h3>Admission control</h3>
+      <ol>
+        <li><strong>Mutating admission</strong> — runs first. May modify the object (Istio sidecar injector, cert-manager).</li>
+        <li><strong>Validating admission</strong> — runs second. May reject, may not modify (PodSecurity, ValidatingAdmissionWebhook).</li>
+      </ol>
+      <div class="callout callout-prod"><div class="callout-title">Hard rules</div><ul><li>Admission webhooks must be HA. If the webhook is down, all Pod creation hangs.</li><li>Webhooks must have a short timeout (set yours to 3s).</li><li>Never block on external IO in an admission webhook unless you can survive it being down.</li><li><code>failurePolicy: Fail</code> is the safe default. <code>Ignore</code> is for emergencies only.</li></ul></div>
+
+      <h3>API server scaling</h3>
+      <p>Bottlenecks: <strong>etcd write throughput</strong> (hard limit), <strong>watch cache memory</strong> (lots of controllers with broad watches = lots of RAM), <strong>network</strong> to etcd, <strong>admission latency</strong> (stacked webhooks).</p>
+      <p>Tuning flags: <code>--max-requests-inflight</code> (default 400/200), <code>--max-mutating-requests-inflight</code> (200), <code>--request-timeout</code> (60s — be careful), and <strong><code>--enable-priority-and-fairness</code></strong> — turn this on for production.</p>
+
+      <h2>2.4 etcd deep-dive</h2>
+      <h3>Quorum and durability</h3>
+      <p>3 nodes tolerates 1 failure. 5 nodes tolerates 2. More nodes ≠ more durable. <strong>Use an odd number.</strong> 3 nodes is the production sweet spot.</p>
+      <h3>Storage layout</h3>
+      <p>etcd writes ahead to WAL, then snapshots when WAL grows. <code>etcdctl snapshot save /backup.db</code> is your disaster recovery artefact. <strong>Cadence: every 15 minutes for typical clusters. Encrypt at rest. Test the restore quarterly.</strong></p>
+      <h3>Hard quota</h3>
+      <p><code>--quota-backend-bytes</code> default 8 GiB. When you hit this, etcd returns <code>mvcc: database space exceeded</code>. <strong>The cluster is dead.</strong> Monitor <code>etcd_debugger_mvcc_db_total_size_in_bytes</code>.</p>
+
+      <h2>2.5 The scheduler in detail</h2>
+      <h3>Scheduling framework</h3>
+      <p>PreFilter → Filter → PostFilter → PreScore → Score → NormaliseScore → Reserve → Permit → PreBind → Bind.</p>
+      <p>Plugins enabled by default: <code>NodeResourcesFit</code>, <code>NodeAffinity</code>, <code>TaintToleration</code>, <code>PodTopologySpread</code>, <code>VolumeBinding</code>.</p>
+
+      <h2>2.6 High availability patterns</h2>
+      <h3>Control-plane HA</h3>
+      <p>3 apiserver behind LB, 3 etcd members (co-located or separate), scheduler and controller-manager as 2 instances each with leader election.</p>
+
+      <h3>Node failure</h3>
+      <p>The kubelet stops heartbeating. The <code>node-controller</code> marks the node <code>NotReady</code> after threshold (default 40s). Then Pods are evicted (after <code>--pod-eviction-timeout</code>, default 5 minutes).</p>
+      <p><strong>For stateful workloads</strong>: eviction is the right behavior for stateless. For databases, the application must handle losing a replica gracefully.</p>
+
+      <h2>2.7 Production failure modes (Part II)</h2>
+      <ul>
+        <li>etcd running on spinning disks. Random write latency = random cluster-wide stalls.</li>
+        <li>Admission webhooks with no HA, slow responses, or tight timeouts.</li>
+        <li>API Priority and Fairness disabled.</li>
+        <li>Watches with broad selectors.</li>
+        <li>No etcd backups tested.</li>
+        <li>Co-locating etcd and workloads.</li>
+        <li>Skipping minor versions.</li>
+        <li>Single-instance scheduler/controller-manager with no leader election.</li>
+      </ul>
+
+      <h2>2.8 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>When</th><th>When not</th></tr></thead>
+        <tbody>
+          <tr><td>Managed control plane (EKS/GKE/AKS)</td><td>No dedicated platform team</td><td>Need k8s version pinned to a specific minor</td></tr>
+          <tr><td>Self-managed (kubeadm)</td><td>Want full control, have a strong platform team</td><td>Only 2 platform engineers</td></tr>
+          <tr><td>API Priority &amp; Fairness on</td><td>Production with mixed workloads</td><td>Single-tenant dev clusters</td></tr>
+          <tr><td>PodSecurity <code>baseline</code></td><td>Production</td><td>Workloads needing privileged</td></tr>
+          <tr><td>Defrag etcd nightly</td><td>Production control plane</td><td>Dev clusters</td></tr>
+        </tbody>
+      </table>
+
+      <h2>2.9 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/docs/reference/command-line-tools-reference/kube-apiserver/">kube-apiserver internals</a></li>
+        <li><a href="https://etcd.io/docs/v3.5/op-guide/">etcd operation guide</a></li>
+        <li><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/scheduling-framework/">Scheduler Framework</a></li>
+        <li><a href="https://kubernetes.io/docs/concepts/cluster-administration/flow-control/">API Priority and Fairness</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART III ════════════════ -->
+    <article id="iii-networking">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part III</span></div>
+        <h1>Networking</h1>
+        <p class="doc-tagline">Networking is where Kubernetes stops feeling like a single machine. Most production outages have a network component; many begin there.</p>
+      </header>
+
+      <h2>3.1 The four problems K8s networking must solve</h2>
+      <ol>
+        <li><strong>Container-to-container</strong> within a Pod — solved by sharing the Pod's network namespace.</li>
+        <li><strong>Pod-to-Pod</strong> across nodes — solved by the CNI plugin.</li>
+        <li><strong>Pod-to-Service</strong> — solved by <code>kube-proxy</code> programming iptables/IPVS.</li>
+        <li><strong>External-to-Service</strong> — solved by <code>Ingress</code>, <code>LoadBalancer</code> Service, or <code>NodePort</code>.</li>
+      </ol>
+
+      <p><strong>The Cluster Networking Contract</strong>: all Pods can communicate with all other Pods without NAT; all Nodes can communicate with all Pods without NAT; Pods see their own IP as the source.</p>
+
+      <h2>3.2 CNI — Container Network Interface</h2>
+      <table>
+        <thead><tr><th>CNI</th><th>Model</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Calico</strong></td><td>BGP or IP-in-IP, policy</td><td>Battle-tested, strong NetworkPolicy, scales large</td></tr>
+          <tr><td><strong>Cilium</strong></td><td>eBPF</td><td>Replaces kube-proxy, identity-aware policy, observability built-in</td></tr>
+          <tr><td><strong>AWS VPC CNI</strong></td><td>Real VPC IPs on Pods</td><td>EKS default; uses ENIs, IP-hungry</td></tr>
+          <tr><td><strong>Azure CNI</strong></td><td>Real VNet IPs on Pods</td><td>AKS default</td></tr>
+          <tr><td><strong>GKE Dataplane V2</strong></td><td>eBPF, Cilium-based</td><td>GKE default for newer clusters</td></tr>
+          <tr><td><strong>Flannel</strong></td><td>Simple VXLAN overlay</td><td>Lightweight, dev-friendly, weak policy</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Decision points</h3>
+      <ul>
+        <li><strong>Overlay vs underlay.</strong> Overlay hides Pod IPs (easier IP planning, MTU/encap overhead). Underlay puts Pod IPs on the real network (better performance, observability, but you must plan IP space).</li>
+        <li><strong>Policy enforcement.</strong> Calico and Cilium support full NetworkPolicy. Flannel is permissive.</li>
+        <li><strong>eBPF vs iptables.</strong> eBPF (Cilium) scales better for large clusters with many Services.</li>
+        <li><strong>Cloud-native integrations.</strong> AWS VPC CNI gets you security groups per Pod, ENI-level metrics.</li>
+      </ul>
+
+      <h3>IP address management</h3>
+      <p>Allocate a Pod CIDR per node, non-overlapping with node network, Service CIDR, or anything routed in your VPC. <strong>Plan for 110–125% of current node count × max Pods per node.</strong></p>
+
+      <div class="callout callout-prod"><div class="callout-title">MTU gotcha</div><p>VXLAN adds 50 bytes of overhead. If your underlying MTU is 1500, the overlay MTU must be 1450. Symptoms: large packets silently fail; monitoring works (small packets) but file transfers break.</p></div>
+
+      <h2>3.3 Services in detail</h2>
+      <table>
+        <thead><tr><th>Type</th><th>What it does</th><th>Use case</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ClusterIP</strong></td><td>Virtual IP inside cluster</td><td>Internal microservices</td></tr>
+          <tr><td><strong>NodePort</strong></td><td>Opens a port on every Node</td><td>Rare in production; ingress nodes</td></tr>
+          <tr><td><strong>LoadBalancer</strong></td><td>Provisions a cloud L4 LB</td><td>External L4, no HTTP routing</td></tr>
+          <tr><td><strong>ExternalName</strong></td><td>DNS CNAME</td><td>Aliasing to external services</td></tr>
+          <tr><td><strong>Headless (ClusterIP: None)</strong></td><td>No VIP; DNS returns Pod IPs</td><td>StatefulSets, client wants specific Pod</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Session affinity and traffic policy</h3>
+      <ul>
+        <li><code>sessionAffinity: ClientIP</code> — sticky to a Pod. Used for stateful protocols. <strong>Don't use it for HTTP.</strong></li>
+        <li><code>externalTrafficPolicy: Cluster</code> (default) — kube-proxy SNATs; original source IP is lost.</li>
+        <li><code>externalTrafficPolicy: Local</code> — only sends to Pods on the receiving Node; preserves source IP. Drops traffic if no local Pod.</li>
+      </ul>
+
+      <h2>3.4 DNS — CoreDNS</h2>
+      <ul>
+        <li><strong>Negative caching.</strong> Old NXDOMAIN answers stick for 5 seconds (default). A bad Service DNS that resolves once will keep failing for 5s.</li>
+        <li><strong>Search path.</strong> Pods inherit <code>&lt;ns&gt;.svc.cluster.local</code>, <code>svc.cluster.local</code>, <code>cluster.local</code>.</li>
+        <li><strong>DNS load.</strong> Every Service lookup goes to CoreDNS. Thousands of Services and short-lived connections = DNS bottleneck. Mitigations: <strong>NodeLocal DNSCache</strong>, caching in app, IP-based service discovery.</li>
+      </ul>
+
+      <h2>3.5 Ingress &amp; Gateway API</h2>
+      <table>
+        <thead><tr><th>Controller</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>ingress-nginx</strong></td><td>Default in many distros; perf issues at scale</td></tr>
+          <tr><td><strong>Traefik</strong></td><td>Good DX, middleware concept</td></tr>
+          <tr><td><strong>HAProxy Ingress</strong></td><td>Solid performance, less ergonomic</td></tr>
+          <tr><td><strong>Envoy Gateway / Istio</strong></td><td>Gateway API implementation, more powerful, more ops</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Ingress → Gateway API</div><p><code>Ingress</code> is deprecated in spirit. <strong>Gateway API</strong> is the successor: more expressive, multi-protocol, role-oriented. If you're starting a new cluster, plan to use Gateway API.</p></div>
+
+      <h2>3.6 NetworkPolicy</h2>
+      <p>NetworkPolicy is the Kubernetes firewall. Pod-to-pod, namespace-to-namespace. <strong>No policy = all traffic allowed.</strong></p>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">networking.k8s.io/v1</span>
+<span class="k">kind</span>: <span class="s">NetworkPolicy</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">default-deny-ingress</span>
+<span class="k">spec</span>:
+  <span class="k">podSelector</span>: {}
+  <span class="k">policyTypes</span>: [<span class="s">"Ingress"</span>]</code></pre>
+
+      <h2>3.7 Service mesh</h2>
+      <p>A mesh puts a sidecar proxy in every Pod. Handles mTLS, L7 routing, retries, circuit breaking, telemetry, authz policy.</p>
+      <div class="callout callout-prod"><div class="callout-title">Production trade-offs</div><ul><li><strong>Cost:</strong> sidecars consume memory and CPU. 1000 Pods × 100 MiB = 100 GB. Mitigations: eBPF mesh (Cilium, Linkerd), Istio Ambient.</li><li><strong>Latency:</strong> sidecar adds a hop. p99 goes up a few ms.</li><li><strong>Operational complexity:</strong> mesh upgrades, control plane HA, debug story.</li></ul></div>
+      <p><strong>Recommendation:</strong> start without a mesh. Add one when you have a concrete need (mTLS at scale, L7 routing across many services).</p>
+
+      <h2>3.8 Production failure modes (Part III)</h2>
+      <ul>
+        <li>CNI MTU mismatch.</li>
+        <li>ClusterIP exhaustion.</li>
+        <li>DNS as the bottleneck.</li>
+        <li>NetworkPolicy that blocks DNS.</li>
+        <li>kube-proxy iptables scaling.</li>
+        <li>ExternalTrafficPolicy mishandling.</li>
+        <li>Cloud L4 LB idle timeout longer than app keepalive.</li>
+        <li>No source NAT policy.</li>
+      </ul>
+
+      <h2>3.9 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>Cilium CNI</td><td>Need scale, eBPF, L7 policy</td><td>Small cluster, legacy kube-proxy</td></tr>
+          <tr><td>Calico</td><td>Need strong policy, BGP networking</td><td>Don't want to think about network engineering</td></tr>
+          <tr><td>AWS VPC CNI</td><td>EKS, want security groups per Pod</td><td>Can't afford the IP planning</td></tr>
+          <tr><td>Overlay vs underlay</td><td>Overlay: easier, fewer IPs. Underlay: performance</td><td>Don't choose underlay without an IP plan</td></tr>
+          <tr><td>Service mesh</td><td>Many services, mTLS at scale, L7 routing</td><td>&lt; 20 services, no security requirement</td></tr>
+          <tr><td>Gateway API</td><td>Greenfield, multi-team</td><td>Stuck on Ingress-only ecosystem</td></tr>
+          <tr><td>NodeLocal DNSCache</td><td>&gt; 1000 Services, many short connections</td><td>Small clusters</td></tr>
+        </tbody>
+      </table>
+
+      <h2>3.10 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/docs/concepts/services-networking/">Kubernetes Networking Model</a></li>
+        <li><a href="https://github.com/containernetworking/cni">CNI Specification</a></li>
+        <li><a href="https://docs.cilium.io/">Cilium Documentation</a></li>
+        <li><a href="https://gateway-api.sigs.k8s.io/">Gateway API</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART IV ════════════════ -->
+    <article id="iv-workloads">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part IV</span></div>
+        <h1>Workloads &amp; Scaling</h1>
+        <p class="doc-tagline">The objects that actually run your code. Where most operational decisions live.</p>
+      </header>
+
+      <h2>4.1 Deployments and the rolling update contract</h2>
+      <p>A Deployment manages a ReplicaSet, which manages Pods. Rolling updates replace ReplicaSets in waves:</p>
+      <div class="mermaid">
+flowchart LR
+    A["v1<br/>Replicaset A (5 replicas)"] -->|"scale down 1"| B["v1 → v2<br/>A:4, B:1"]
+    B --> C["A:3, B:2"]
+    C --> D["A:2, B:3"]
+    D --> E["A:1, B:4"]
+    E --> F["A:0, B:5<br/>v2 deployed"]
+    style A fill:#3fb95022,stroke:#3fb950
+    style F fill:#1f6feb22,stroke:#58a6ff
+      </div>
+
+      <pre><code><span class="k">spec</span>:
+  <span class="k">strategy</span>:
+    <span class="k">type</span>: <span class="s">RollingUpdate</span>
+    <span class="k">rollingUpdate</span>:
+      <span class="k">maxSurge</span>: <span class="s">25%</span>
+      <span class="k">maxUnavailable</span>: <span class="s">25%</span></code></pre>
+
+      <div class="callout callout-rule"><div class="callout-title">Production rule</div><p>Set <code>maxSurge</code> and <code>maxUnavailable</code> explicitly. Don't rely on defaults (25%/25%).</p></div>
+
+      <h2>Health checks: the contract for "ready"</h2>
+      <pre><code><span class="k">spec</span>:
+  <span class="k">containers</span>:
+    - <span class="k">name</span>: <span class="s">app</span>
+      <span class="k">livenessProbe</span>:
+        <span class="k">httpGet</span>: { <span class="k">path</span>: <span class="s">/healthz</span>, <span class="k">port</span>: <span class="n">8080</span> }
+        <span class="k">initialDelaySeconds</span>: <span class="n">10</span>
+        <span class="k">periodSeconds</span>: <span class="n">10</span>
+        <span class="k">failureThreshold</span>: <span class="n">3</span>
+      <span class="k">readinessProbe</span>:
+        <span class="k">httpGet</span>: { <span class="k">path</span>: <span class="s">/ready</span>, <span class="k">port</span>: <span class="n">8080</span> }
+        <span class="k">periodSeconds</span>: <span class="n">5</span>
+        <span class="k">failureThreshold</span>: <span class="n">2</span>
+      <span class="k">startupProbe</span>:
+        <span class="k">httpGet</span>: { <span class="k">path</span>: <span class="s">/healthz</span>, <span class="k">port</span>: <span class="n">8080</span> }
+        <span class="k">failureThreshold</span>: <span class="n">30</span>
+        <span class="k">periodSeconds</span>: <span class="n">5</span></code></pre>
+
+      <div class="callout callout-prod"><div class="callout-title">Liveness ≠ readiness</div><p><strong>Liveness</strong> restarts the container; <strong>readiness</strong> just stops traffic. If liveness fails during a transient backend outage, every Pod restarts in sync — thundering herd.</p></div>
+
+      <h2>PodDisruptionBudget (PDB)</h2>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">policy/v1</span>
+<span class="k">kind</span>: <span class="s">PodDisruptionBudget</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">api</span>
+<span class="k">spec</span>:
+  <span class="k">minAvailable</span>: <span class="n">2</span>
+  <span class="k">selector</span>:
+    <span class="k">matchLabels</span>:
+      <span class="k">app</span>: <span class="s">api</span></code></pre>
+      <div class="callout callout-prod"><div class="callout-title">If you don't set a PDB</div><p>The cluster will happily drain every Pod of your service at once. This is one of the most common production outages from "innocent" node maintenance.</p></div>
+
+      <h2>4.2 Resource management</h2>
+      <table>
+        <thead><tr><th>QoS</th><th>When</th><th>Behavior on node pressure</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Guaranteed</strong></td><td>requests == limits for CPU and memory</td><td>Last to be killed</td></tr>
+          <tr><td><strong>Burstable</strong></td><td>requests set, limits &gt; requests or one missing</td><td>Killed after BestEffort</td></tr>
+          <tr><td><strong>BestEffort</strong></td><td>No requests or limits</td><td>Killed first</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-prod"><div class="callout-title">BestEffort is dangerous in production</div><p>A noisy-neighbor Pod can be killed to free memory for a Guaranteed Pod. Don't run production workloads BestEffort.</p></div>
+
+      <h3>CPU vs memory behavior</h3>
+      <ul>
+        <li><strong>CPU</strong> is compressible. A limit caps the rate but doesn't OOM-kill.</li>
+        <li><strong>Memory</strong> is incompressible. Hit the limit → kernel OOM-killer fires → Pod restarts.</li>
+        <li><strong>Memory limits need headroom</strong> for heap, GC, page cache. Profile your app.</li>
+      </ul>
+
+      <h2>4.3 Horizontal Pod Autoscaler (HPA)</h2>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">autoscaling/v2</span>
+<span class="k">kind</span>: <span class="s">HorizontalPodAutoscaler</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">api</span>
+<span class="k">spec</span>:
+  <span class="k">scaleTargetRef</span>:
+    <span class="k">apiVersion</span>: <span class="s">apps/v1</span>
+    <span class="k">kind</span>: <span class="s">Deployment</span>
+    <span class="k">name</span>: <span class="s">api</span>
+  <span class="k">minReplicas</span>: <span class="n">3</span>
+  <span class="k">maxReplicas</span>: <span class="n">50</span>
+  <span class="k">metrics</span>:
+    - <span class="k">type</span>: <span class="s">Resource</span>
+      <span class="k">resource</span>:
+        <span class="k">name</span>: <span class="s">cpu</span>
+        <span class="k">target</span>:
+          <span class="k">type</span>: <span class="s">Utilization</span>
+          <span class="k">averageUtilization</span>: <span class="n">60</span></code></pre>
+
+      <ul>
+        <li>HPA needs a metrics pipeline (metrics-server for CPU/memory; Prometheus Adapter for custom).</li>
+        <li>HPA doesn't scale from zero by default. Use KEDA for that.</li>
+        <li>Don't autoscale on raw CPU alone. Pair with custom business metric.</li>
+        <li><strong>Set min &gt; 1</strong> for prod services. A single Pod with a node failure = zero replicas.</li>
+        <li>HPA decision latency is 15s default.</li>
+      </ul>
+
+      <h2>4.4 Vertical Pod Autoscaler (VPA)</h2>
+      <ul>
+        <li><strong>Modes:</strong> <code>Off</code> (recommendations), <code>Initial</code> (set on Pod creation), <code>Auto</code> (live-update, evicts Pods).</li>
+        <li>VPA in <code>Auto</code> mode conflicts with HPA on CPU/memory. Pick one.</li>
+        <li>Production usage: run VPA in <code>Off</code> mode as a recommendation engine.</li>
+      </ul>
+
+      <h2>4.5 Cluster Autoscaler vs Karpenter</h2>
+      <table>
+        <thead><tr><th>Aspect</th><th>Cluster Autoscaler</th><th>Karpenter</th></tr></thead>
+        <tbody>
+          <tr><td>Cloud support</td><td>Multi-cloud</td><td>AWS-first</td></tr>
+          <tr><td>Instance selection</td><td>Per node group</td><td>Based on Pod requirements</td></tr>
+          <tr><td>Speed</td><td>~30s</td><td>15–30s</td></tr>
+          <tr><td>Spot / mixed</td><td>Limited</td><td>Strong</td></tr>
+          <tr><td>Cost</td><td>Conservative</td><td>Consolidates well</td></tr>
+        </tbody>
+      </table>
+
+      <table>
+        <thead><tr><th>Situation</th><th>Pick</th></tr></thead>
+        <tbody>
+          <tr><td>Multi-cloud</td><td>Cluster Autoscaler</td></tr>
+          <tr><td>AWS, fast scaling, cost-optimization</td><td>Karpenter</td></tr>
+          <tr><td>GPU workloads, mixed instance</td><td>Karpenter</td></tr>
+          <tr><td>Conservative, well-trodden path</td><td>Cluster Autoscaler</td></tr>
+        </tbody>
+      </table>
+
+      <h2>4.6 StatefulSets</h2>
+      <p>Stable, ordered network IDs. Stable, per-Pod storage. Ordered rolling updates. Use for databases, queues, Zookeeper, etcd, Consul — anything that can't tolerate peer swapping.</p>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">apps/v1</span>
+<span class="k">kind</span>: <span class="s">StatefulSet</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">db</span>
+<span class="k">spec</span>:
+  <span class="k">serviceName</span>: <span class="s">db</span>
+  <span class="k">replicas</span>: <span class="n">3</span>
+  <span class="k">selector</span>:
+    <span class="k">matchLabels</span>:
+      <span class="k">app</span>: <span class="s">db</span></code></pre>
+
+      <div class="callout callout-prod"><div class="callout-title">Production gotchas</div><ul><li>Ordered scaling is slow.</li><li>No auto-rebalancing across nodes.</li><li>Default update strategy is <code>OrderedReady</code>.</li></ul><p>For real databases, use a dedicated operator (CloudNativePG, Zalando, MongoDB Operator, Strimzi for Kafka).</p></div>
+
+      <h2>4.7 DaemonSets</h2>
+      <p>One Pod per node. Used for logging agents, node metrics exporters, CNI components, storage daemons.</p>
+      <div class="callout callout-rule"><div class="callout-title">Production rule</div><p>Tolerations are critical. Without them, your logging agent won't run on tainted nodes (and you'll have a blind spot exactly where you need logs).</p></div>
+
+      <h2>4.8 Jobs and CronJobs</h2>
+      <ul>
+        <li>Set <code>ttlSecondsAfterFinished</code> — Job objects accumulate and clutter the API.</li>
+        <li>Set <code>activeDeadlineSeconds</code> — stuck Jobs otherwise live forever.</li>
+        <li>CronJob <code>concurrencyPolicy: Forbid</code> unless you specifically want overlap.</li>
+        <li>For complex DAGs, use Argo Workflows or Dagster.</li>
+      </ul>
+
+      <h2>4.9 Init containers and sidecars</h2>
+      <ul>
+        <li><strong>Init containers</strong> run before main; used for migrations, waiting for deps, fetching config.</li>
+        <li><strong>Sidecars</strong> (native, 1.28+) share the Pod lifecycle with the main container.</li>
+        <li>Sidecars that fail can kill the Pod — set restart policy on them.</li>
+      </ul>
+
+      <h2>4.10 Priority classes and preemption</h2>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">scheduling.k8s.io/v1</span>
+<span class="k">kind</span>: <span class="s">PriorityClass</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">production-critical</span>
+<span class="k">value</span>: <span class="n">1000000</span>
+<span class="k">globalDefault</span>: <span class="b">false</span>
+<span class="k">preemptionPolicy</span>: <span class="s">PreemptLowerPriority</span></code></pre>
+
+      <h2>4.11 Production failure modes (Part IV)</h2>
+      <ul>
+        <li>No PDB set.</li>
+        <li>Liveness probe too aggressive.</li>
+        <li>Memory limits too tight.</li>
+        <li>HPA on CPU only.</li>
+        <li>CA/Karpenter misconfigured.</li>
+        <li>StatefulSet without an operator.</li>
+        <li>CronJob without <code>concurrencyPolicy: Forbid</code>.</li>
+        <li>No startup probe on slow apps.</li>
+        <li>No priority class.</li>
+      </ul>
+
+      <h2>4.12 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>HPA + CA</td><td>Standard web services</td><td>Batch, scale-to-zero</td></tr>
+          <tr><td>HPA + Karpenter</td><td>AWS, fast scaling, cost</td><td>Non-AWS</td></tr>
+          <tr><td>VPA in <code>Off</code> mode</td><td>Need recommendations only</td><td>Critical workloads</td></tr>
+          <tr><td>VPA in <code>Auto</code></td><td>Stateful services without HPA</td><td>Combined with HPA on CPU/memory</td></tr>
+          <tr><td>KEDA</td><td>Scale-to-zero, event-driven</td><td>Plain HTTP services</td></tr>
+          <tr><td>StatefulSet + Operator</td><td>Real database/queue</td><td>Stateless service</td></tr>
+          <tr><td>Native sidecars</td><td>1.28+, lifecycle control</td><td>Older clusters</td></tr>
+        </tbody>
+      </table>
+
+      <h2>4.13 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/docs/concepts/workloads/controllers/deployment/">Deployments</a></li>
+        <li><a href="https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale-walkthrough/">HPA Walkthrough</a></li>
+        <li><a href="https://karpenter.sh/">Karpenter Docs</a></li>
+        <li><a href="https://keda.sh/">KEDA</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART V ════════════════ -->
+    <article id="v-storage">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part V</span></div>
+        <h1>Storage</h1>
+        <p class="doc-tagline">Storage is where Kubernetes becomes specific. The abstractions are simple; the realities of durability, performance, and cost live in the CSI driver.</p>
+      </header>
+
+      <h2>5.1 The storage contract</h2>
+      <pre><code>  Pod.spec.volumes
+      │
+      ▼
+  PersistentVolumeClaim (PVC)
+      │
+      ▼
+  PersistentVolume (PV) — provisioned dynamically by a StorageClass
+      │
+      ▼
+  CSI driver on the node — actually attaches and mounts the volume</code></pre>
+
+      <h2>5.2 Volume types — when to use what</h2>
+      <table>
+        <thead><tr><th>Type</th><th>Lifetime</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td><code>emptyDir</code></td><td>Pod lifetime</td><td>Scratch space, caches, tmp</td></tr>
+          <tr><td><code>hostPath</code></td><td>Node lifetime</td><td>Single-node clusters, dev; <strong>avoid in prod</strong></td></tr>
+          <tr><td><code>configMap</code> / <code>secret</code></td><td>Same as source</td><td>Inject config/secrets as files</td></tr>
+          <tr><td><code>persistentVolumeClaim</code></td><td>Until PVC deleted</td><td>Real persistent storage</td></tr>
+          <tr><td><code>projected</code></td><td>Pod lifetime</td><td>Multiple sources merged into one dir</td></tr>
+          <tr><td><code>downwardAPI</code></td><td>Pod lifetime</td><td>Inject Pod metadata as files</td></tr>
+          <tr><td><code>csi</code></td><td>Until PVC deleted</td><td>Direct CSI reference</td></tr>
+        </tbody>
+      </table>
+
+      <h2>5.3 PVCs</h2>
+      <table>
+        <thead><tr><th>Mode</th><th>Meaning</th><th>Storage class support</th></tr></thead>
+        <tbody>
+          <tr><td><code>ReadWriteOnce</code> (RWO)</td><td>One node can mount as RW</td><td>All block storage</td></tr>
+          <tr><td><code>ReadOnlyMany</code> (ROX)</td><td>Many nodes can mount as RO</td><td>NFS, CephFS</td></tr>
+          <tr><td><code>ReadWriteMany</code> (RWX)</td><td>Many nodes can mount as RW</td><td>NFS, CephFS, Azure Files</td></tr>
+          <tr><td><code>ReadWriteOncePod</code> (RWOP)</td><td>Only one Pod can mount as RW</td><td>CSI 1.x+</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Production reality</div><p>RWO is the common case. RWX is expensive (NFS or object-backed). RWOP is the new ideal for databases (no two Pods ever mount the same volume).</p></div>
+
+      <h2>5.4 StorageClass and dynamic provisioning</h2>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">storage.k8s.io/v1</span>
+<span class="k">kind</span>: <span class="s">StorageClass</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">gp3</span>
+<span class="k">provisioner</span>: <span class="s">ebs.csi.aws.com</span>
+<span class="k">parameters</span>:
+  <span class="k">type</span>: <span class="s">gp3</span>
+  <span class="k">iops</span>: <span class="s">"3000"</span>
+  <span class="k">throughput</span>: <span class="s">"125"</span>
+  <span class="k">encrypted</span>: <span class="s">"true"</span>
+<span class="k">volumeBindingMode</span>: <span class="s">WaitForFirstConsumer</span>
+<span class="k">allowVolumeExpansion</span>: <span class="b">true</span>
+<span class="k">reclaimPolicy</span>: <span class="s">Delete</span></code></pre>
+
+      <div class="callout callout-rule"><div class="callout-title">volumeBindingMode</div><p><strong>WaitForFirstConsumer</strong> is the production default — PV is created when Pod is scheduled, in the same AZ. <code>Immediate</code> can create a PV in the wrong AZ.</p></div>
+
+      <h2>5.5 CSI</h2>
+      <table>
+        <thead><tr><th>Provider</th><th>Driver</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>AWS</td><td><code>ebs.csi.aws.com</code></td><td>Per-Pod EBS; EBS gp3, io2</td></tr>
+          <tr><td>GCP</td><td><code>pd.csi.storage.gke.io</code></td><td>Persistent Disk</td></tr>
+          <tr><td>Azure</td><td><code>disk.csi.azure.com</code></td><td>Managed Disks</td></tr>
+          <tr><td>NetApp</td><td><code>netapp.io/trident</code></td><td>Enterprise storage</td></tr>
+          <tr><td>Ceph</td><td><code>rook-ceph.rbd.csi.ceph.com</code></td><td>Self-managed distributed storage</td></tr>
+        </tbody>
+      </table>
+
+      <h2>5.7 Production gotchas</h2>
+      <ul>
+        <li><strong>The "local" storage trap</strong> — Local volumes (hostPath, local PV) are tied to a node. If the node dies, the data is gone.</li>
+        <li><strong>The "PV stuck in Terminating" problem</strong> — Force-remove the finalizer: <code>kubectl patch pv &lt;name&gt; -p '{"metadata":{"finalizers":null}}'</code></li>
+        <li><strong>"I deleted the StatefulSet but kept the PVCs, now I'm restoring from old data" surprise</strong> — PVCs are not deleted with StatefulSets by default.</li>
+        <li><strong>Snapshot/backup retention</strong> — Most cloud providers charge per GB. Implement retention policies.</li>
+      </ul>
+
+      <h2>5.9 Production failure modes (Part V)</h2>
+      <ul>
+        <li><code>volumeBindingMode: Immediate</code> in StorageClass.</li>
+        <li>EBS volume in wrong AZ.</li>
+        <li>Snapshot without retention policy.</li>
+        <li><code>emptyDir</code> for data you need.</li>
+        <li><code>hostPath</code> in production.</li>
+        <li>No expansion policy.</li>
+        <li>PVCs left in <code>Released</code>.</li>
+        <li>Local PVs without replication.</li>
+        <li>CSI driver crash-looping.</li>
+      </ul>
+
+      <h2>5.10 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>gp3 (AWS)</td><td>Default for most</td><td>Need extreme IOPS or NVMe-tier</td></tr>
+          <tr><td>io2 (AWS)</td><td>Databases with high IOPS</td><td>Cost-sensitive</td></tr>
+          <tr><td>NFS (RWX)</td><td>Shared files, build outputs</td><td>High-IOPS database</td></tr>
+          <tr><td>Ceph</td><td>Self-managed, on-prem</td><td>No ops capacity</td></tr>
+          <tr><td>Local PV</td><td>Caches, scratch</td><td>State you can't afford to lose</td></tr>
+          <tr><td>CSI snapshots</td><td>Backups, dev clones</td><td>RPO &gt; minutes is fine</td></tr>
+          <tr><td>StatefulSet + Operator</td><td>Real DB</td><td>Toy workloads</td></tr>
+        </tbody>
+      </table>
+
+      <h2>5.11 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/docs/concepts/storage/persistent-volumes/">Persistent Volumes</a></li>
+        <li><a href="https://github.com/container-storage-interface/spec">CSI Specification</a></li>
+        <li><a href="https://kubernetes.io/docs/concepts/storage/volume-snapshots/">Volume Snapshots</a></li>
+        <li><a href="https://rook.io/">Rook (Ceph operator)</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART VI ════════════════ -->
+    <article id="vi-security">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part VI</span></div>
+        <h1>Security</h1>
+        <p class="doc-tagline">Production security is layered: identity, isolation, supply chain, runtime.</p>
+      </header>
+
+      <h2>6.1 The threat model</h2>
+      <ol>
+        <li><strong>Compromised Pod</strong> — attacker has RCE in your container. Goal: prevent lateral movement, data theft, persistence.</li>
+        <li><strong>Compromised credentials</strong> — leaked SA token, stolen kubeconfig.</li>
+        <li><strong>Compromised supply chain</strong> — malicious image, malicious dependency.</li>
+        <li><strong>Compromised node</strong> — attacker has root on a node.</li>
+        <li><strong>Compromised operator</strong> — malicious or careless human with cluster admin.</li>
+        <li><strong>Compromised cloud account</strong> — IAM credentials for the cluster.</li>
+      </ol>
+
+      <h2>6.2 Pod Security Standards (PSS)</h2>
+      <table>
+        <thead><tr><th>Level</th><th>What it allows</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Privileged</strong></td><td>Anything</td><td>System/infra Pods only</td></tr>
+          <tr><td><strong>Baseline</strong></td><td>Blocks most escalations</td><td>Default for non-prod</td></tr>
+          <tr><td><strong>Restricted</strong></td><td>Hardened best practice</td><td><strong>Default for production</strong></td></tr>
+        </tbody>
+      </table>
+
+      <pre><code><span class="k">apiVersion</span>: <span class="s">v1</span>
+<span class="k">kind</span>: <span class="s">Namespace</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">prod</span>
+  <span class="k">labels</span>:
+    <span class="k">pod-security.kubernetes.io/enforce</span>: <span class="s">restricted</span>
+    <span class="k">pod-security.kubernetes.io/enforce-version</span>: <span class="s">latest</span>
+    <span class="k">pod-security.kubernetes.io/audit</span>: <span class="s">restricted</span>
+    <span class="k">pod-security.kubernetes.io/warn</span>: <span class="s">restricted</span></code></pre>
+
+      <h3>What <code>restricted</code> enforces</h3>
+      <ul>
+        <li><code>runAsNonRoot: true</code></li>
+        <li><code>seccompProfile.type: RuntimeDefault</code></li>
+        <li><code>allowPrivilegeEscalation: false</code></li>
+        <li><code>capabilities.drop: [ALL]</code></li>
+        <li><code>readOnlyRootFilesystem: true</code> (best practice)</li>
+      </ul>
+
+      <h2>6.3 RBAC</h2>
+      <div class="callout callout-rule"><div class="callout-title">Production RBAC patterns</div><ul><li><strong>Service accounts per workload.</strong> Not one SA per namespace; one SA per app, scoped tight.</li><li><strong>Don't use the default SA.</strong></li><li><strong>Humans get cluster-scoped roles sparingly.</strong></li><li><strong>Aggregation</strong> with <code>aggregationRule.clusterRoleSelectors</code>.</li></ul></div>
+
+      <h2>6.4 ServiceAccounts and tokens</h2>
+      <p>Pre-1.24: every SA got a long-lived bearer token, auto-mounted. 1.24+: tokens are <strong>bound to the lifetime of the Pod</strong> via projected tokens. <strong>Set <code>automountServiceAccountToken: false</code> on Pods that don't need API access.</strong></p>
+
+      <p>Audience-scoped tokens are used for IRSA (AWS), GKE Workload Identity, Azure Workload Identity.</p>
+
+      <h2>6.5 Secrets management</h2>
+      <p>Kubernetes Secrets are base64-encoded, not encrypted by default. Real secret management uses one of:</p>
+      <ol>
+        <li><strong>Encrypt at rest in etcd</strong> (EncryptionConfiguration). All major providers do this by default.</li>
+        <li><strong>External secret stores.</strong> Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault.</li>
+        <li><strong>Sealed Secrets</strong> (Bitnami), <strong>External Secrets Operator</strong> (syncing from cloud stores).</li>
+        <li><strong>Direct CSI driver for Vault</strong> (<code>secrets-store.csi.k8s.io</code>).</li>
+      </ol>
+
+      <div class="callout callout-prod"><div class="callout-title">Don't put secrets in env vars</div><p>Env vars leak to: <code>kubectl describe pod</code> output (visible to anyone with read), crash dumps, child process arguments, logs that include <code>os.Environ()</code>.</p></div>
+
+      <h2>6.7 Image supply chain</h2>
+      <ul>
+        <li><strong>Private registries</strong> — ECR, GCR, ACR, Harbor, Quay.</li>
+        <li><strong>Build-time scanning</strong> — Trivy, Grype, Snyk in CI.</li>
+        <li><strong>Admission-time</strong> — Kyverno, OPA/Gatekeeper, Connaisseur.</li>
+        <li><strong>Signing</strong> — Sigstore/Cosign. Verify at admission.</li>
+        <li><strong>SLSA levels</strong> — Aim for at least Level 2 for production images.</li>
+      </ul>
+
+      <pre><code><span class="k">apiVersion</span>: <span class="s">kyverno.io/v1</span>
+<span class="k">kind</span>: <span class="s">ClusterPolicy</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">verify-image-signature</span>
+<span class="k">spec</span>:
+  <span class="k">validationFailureAction</span>: <span class="s">Enforce</span>
+  <span class="k">rules</span>:
+    - <span class="k">name</span>: <span class="s">verify-signature</span>
+      <span class="k">match</span>:
+        <span class="k">resources</span>:
+          <span class="k">kinds</span>: [<span class="s">"Pod"</span>]
+      <span class="k">verifyImages</span>:
+        - <span class="k">imageReferences</span>: [<span class="s">"ghcr.io/myorg/*"</span>]
+          <span class="k">attestors</span>:
+            - <span class="k">entries</span>:
+                - <span class="k">keys</span>:
+                    <span class="k">publicKeys</span>: <span class="s">|</span>
+                      <span class="s">-----BEGIN PUBLIC KEY-----</span>
+                      <span class="s">...</span>
+                      <span class="s">-----END PUBLIC KEY-----</span></code></pre>
+
+      <h2>6.8 Runtime security</h2>
+      <ul>
+        <li><strong>AppArmor / SELinux / seccomp</strong> — kernel-level confinement.</li>
+        <li><strong>gVisor, Kata Containers</strong> — user-space kernel; isolate syscalls. Performance trade-off.</li>
+        <li><strong>Falco</strong> — runtime threat detection. Watches syscalls, k8s audit, network.</li>
+        <li><strong>Tracee</strong> — eBPF-based alternative to Falco.</li>
+      </ul>
+
+      <h2>6.11 Production failure modes (Part VI)</h2>
+      <ul>
+        <li>Default SA in use.</li>
+        <li>SA token auto-mounted on Pods that don't need it.</li>
+        <li>NetworkPolicy not enforced (Flannel).</li>
+        <li>Secrets as env vars.</li>
+        <li>Privileged containers in production.</li>
+        <li>No image scanning.</li>
+        <li>No admission control.</li>
+        <li>Cluster-admin to many humans.</li>
+        <li>Audit logs disabled.</li>
+      </ul>
+
+      <h2>6.12 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>PSS <code>restricted</code></td><td>Production</td><td>Legacy Pods needing privileges</td></tr>
+          <tr><td>Sealed Secrets</td><td>GitOps, no cloud KMS</td><td>Need short-lived dynamic secrets</td></tr>
+          <tr><td>External Secrets Operator</td><td>Cloud-native secret sources</td><td>Pure on-prem without cloud</td></tr>
+          <tr><td>Vault + CSI driver</td><td>Many secrets, dynamic, audit-heavy</td><td>Small deployments</td></tr>
+          <tr><td>Cosign image signing</td><td>Mature supply chain requirements</td><td>Early-stage projects</td></tr>
+          <tr><td>Falco</td><td>Runtime threat detection</td><td>Can't operate it (alerting, tuning)</td></tr>
+          <tr><td>gVisor / Kata</td><td>High-sensitivity workloads</td><td>Performance-sensitive</td></tr>
+        </tbody>
+      </table>
+
+      <h2>6.13 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/docs/concepts/security/pod-security-standards/">Pod Security Standards</a></li>
+        <li><a href="https://kubernetes.io/docs/reference/access-authn-authz/rbac/">RBAC</a></li>
+        <li><a href="https://kubernetes.io/docs/tasks/administer-cluster/encrypt-data/">Encrypting Confidential Data at Rest</a></li>
+        <li><a href="https://external-secrets.io/">External Secrets Operator</a></li>
+        <li><a href="https://falco.org/">Falco</a></li>
+        <li><a href="https://docs.sigstore.dev/">Sigstore / Cosign</a></li>
+        <li><a href="https://owasp.org/www-project-kubernetes-top-ten/">OWASP Kubernetes Top 10</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART VII ════════════════ -->
+    <article id="vii-gitops">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part VII</span></div>
+        <h1>GitOps &amp; Continuous Delivery</h1>
+        <p class="doc-tagline">GitOps is the operational model that fits Kubernetes best. The cluster reconciles toward Git; humans push commits; the system does the rest.</p>
+      </header>
+
+      <h2>7.1 What GitOps actually is</h2>
+      <ol>
+        <li><strong>Declarative configuration</strong> (YAML, Helm, Kustomize) describes the desired cluster state.</li>
+        <li><strong>Versioned in Git</strong> as the single source of truth.</li>
+        <li><strong>Automatically applied</strong> by an agent that watches Git (or repo) and reconciles the cluster.</li>
+        <li><strong>Audited</strong> via Git history: who changed what, when, and why.</li>
+      </ol>
+
+      <h2>7.2 GitOps vs traditional CI/CD</h2>
+      <table>
+        <thead><tr><th></th><th>Traditional</th><th>GitOps</th></tr></thead>
+        <tbody>
+          <tr><td>Source of truth</td><td>CI pipeline + cluster state</td><td>Git repo</td></tr>
+          <tr><td>Cluster drift</td><td>Hidden</td><td>Detected and reverted</td></tr>
+          <tr><td>Promotion</td><td>Pipeline stages, env variables</td><td>Branch/tag, environment directory</td></tr>
+          <tr><td>Rollback</td><td>Re-run old pipeline</td><td>Revert commit</td></tr>
+          <tr><td>Audit</td><td>CI logs</td><td>Git log + commit metadata</td></tr>
+        </tbody>
+      </table>
+
+      <h2>7.3 Argo CD vs Flux</h2>
+      <table>
+        <thead><tr><th></th><th>Argo CD</th><th>Flux</th></tr></thead>
+        <tbody>
+          <tr><td>Architecture</td><td>Central server + repo server + Redis</td><td>Toolkit of operators (source, kustomize, helm, notification)</td></tr>
+          <tr><td>UI</td><td>Polished built-in</td><td>None (third-party UIs)</td></tr>
+          <tr><td>HA</td><td>Leader election</td><td>No central state</td></tr>
+          <tr><td>Application model</td><td><code>Application</code>, <code>ApplicationSet</code></td><td><code>GitRepository</code>, <code>Kustomization</code>, <code>HelmRelease</code></td></tr>
+          <tr><td>Strengths</td><td>Rich UI, easy demo, RBAC, ApplicationSets</td><td>Toolkit composition, no central server</td></tr>
+        </tbody>
+      </table>
+
+      <h2>7.5 Repo structure patterns</h2>
+      <h3>Monorepo</h3>
+      <pre><code>infra/
+├── clusters/
+│   ├── prod-us-east-1/
+│   ├── prod-eu-west-1/
+│   └── dev/
+├── apps/
+│   ├── api-server/
+│   │   ├── base/
+│   │   └── overlays/
+│   └── worker/
+└── platform/</code></pre>
+
+      <h2>7.6 Templating — Kustomize vs Helm</h2>
+      <table>
+        <thead><tr><th>Kustomize</th><th>Helm</th></tr></thead>
+        <tbody>
+          <tr><td>Native to <code>kubectl</code> (<code>kubectl apply -k</code>)</td><td>Templating language (Go templates)</td></tr>
+          <tr><td>Pure patching: base + overlay</td><td>Chart repositories, versioning</td></tr>
+          <tr><td>No templating language</td><td>More expressive but more footguns</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Decision</div><p>Kustomize for app configs you control. Helm for shared infrastructure (cert-manager, ingress-nginx) and for packaging. Don't mix in one app.</p></div>
+
+      <h2>7.7 Progressive delivery</h2>
+      <pre><code><span class="k">apiVersion</span>: <span class="s">argoproj.io/v1alpha1</span>
+<span class="k">kind</span>: <span class="s">Rollout</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: <span class="s">api-server</span>
+<span class="k">spec</span>:
+  <span class="k">strategy</span>:
+    <span class="k">canary</span>:
+      <span class="k">steps</span>:
+        - <span class="k">setWeight</span>: <span class="n">5</span>
+        - <span class="k">pause</span>: { <span class="k">duration</span>: <span class="s">5m</span> }
+        - <span class="k">setWeight</span>: <span class="n">25</span>
+        - <span class="k">pause</span>: { <span class="k">duration</span>: <span class="s">5m</span> }
+        - <span class="k">setWeight</span>: <span class="n">100</span></code></pre>
+
+      <h2>7.8 Drift detection</h2>
+      <p>The reconciler compares cluster state to Git. If they differ (someone ran <code>kubectl edit</code>, an autoscaler changed something), it's drift.</p>
+      <ul>
+        <li><strong>Self-heal</strong> in Argo / <code>prune: true</code> in Flux: the agent reverts the cluster to Git state.</li>
+        <li><strong>Disable self-heal</strong> for stateful workloads where the agent shouldn't revert legitimate changes.</li>
+      </ul>
+
+      <h2>7.9 Secrets in GitOps</h2>
+      <p>Options: External Secrets Operator, Sealed Secrets, SOPS, Vault Agent Injector. Pick based on rotation cadence, compliance, tooling tolerance.</p>
+
+      <h2>7.11 Production failure modes (Part VII)</h2>
+      <ul>
+        <li>Git is not the source of truth. Self-heal hides it; revert shows up later.</li>
+        <li>Argo CD without HA. Central server is a SPOF.</li>
+        <li>Helm chart overrides everywhere.</li>
+        <li>Sync windows not configured. Auto-sync during an incident can clobber mitigations.</li>
+        <li>Manifest sprawl.</li>
+        <li>No drift detection policy.</li>
+        <li>Long-lived branches.</li>
+      </ul>
+
+      <h2>7.12 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>Argo CD</td><td>Want UI, large teams, demo-ability</td><td>Want minimal ops footprint</td></tr>
+          <tr><td>Flux</td><td>Modularity, multi-tenant, no central server</td><td>Need polished UI out of the box</td></tr>
+          <tr><td>Kustomize</td><td>Internal apps, simple config</td><td>Heavy templating needs</td></tr>
+          <tr><td>Helm</td><td>Shared infra, complex apps</td><td>Pure patching suffices</td></tr>
+          <tr><td>Monorepo</td><td>Small platform, single team</td><td>Many independent app teams</td></tr>
+          <tr><td>Multi-repo</td><td>App teams own deployment</td><td>Heavy coordination overhead</td></tr>
+          <tr><td>Argo Rollouts</td><td>Need canary + metrics analysis</td><td>Single cluster, single env</td></tr>
+        </tbody>
+      </table>
+
+      <h2>7.13 Further reading</h2>
+      <ul>
+        <li><a href="https://argo-cd.readthedocs.io/">Argo CD</a></li>
+        <li><a href="https://fluxcd.io/">Flux CD</a></li>
+        <li><a href="https://opengitops.dev/">OpenGitOps principles</a></li>
+        <li><a href="https://argoproj.github.io/argo-rollouts/">Argo Rollouts</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART VIII ════════════════ -->
+    <article id="viii-observability">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part VIII</span></div>
+        <h1>Observability</h1>
+        <p class="doc-tagline">You can't operate what you can't see. Kubernetes observability has four pillars and many pitfalls.</p>
+      </header>
+
+      <h2>8.1 The four signals</h2>
+      <table>
+        <thead><tr><th>Signal</th><th>What</th><th>How in Kubernetes</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Metrics</strong></td><td>Numeric time series</td><td>Prometheus, Datadog, Cloud Monitoring</td></tr>
+          <tr><td><strong>Logs</strong></td><td>Discrete events</td><td>Loki, ELK, Splunk, Cloud Logging</td></tr>
+          <tr><td><strong>Traces</strong></td><td>Request paths across services</td><td>Jaeger, Tempo, Datadog APM</td></tr>
+          <tr><td><strong>Events</strong></td><td>Cluster-level changes</td><td>EventRouter → log store; kube-state-metrics</td></tr>
+        </tbody>
+      </table>
+
+      <h3>The golden signals</h3>
+      <p>For each service: <strong>Rate</strong>, <strong>Errors</strong>, <strong>Duration</strong>, <strong>Saturation</strong>.</p>
+
+      <h2>8.2 Metrics — Prometheus and the ecosystem</h2>
+      <div class="mermaid">
+flowchart LR
+    M["/metrics endpoints<br/>(Pod, Node, Service)"] -->|scrape| P[Prometheus]
+    P --> Q["PromQL"]
+    P --> AM[Alertmanager] -->|alert| SL["Slack / PagerDuty"]
+    P --> G[Grafana] --> D[dashboards]
+    style P fill:#1f6feb22,stroke:#58a6ff
+      </div>
+
+      <h3>What to scrape</h3>
+      <table>
+        <thead><tr><th>Source</th><th>What it gives you</th></tr></thead>
+        <tbody>
+          <tr><td><strong>cAdvisor (kubelet)</strong></td><td>Per-container CPU, memory, network, fs</td></tr>
+          <tr><td><strong>kube-state-metrics</strong></td><td>Cluster-level counts</td></tr>
+          <tr><td><strong>Node exporter</strong></td><td>Host-level metrics</td></tr>
+          <tr><td><strong>App <code>/metrics</code></strong></td><td>App-specific (RED, business KPIs)</td></tr>
+          <tr><td><strong>Ingress / API gateway</strong></td><td>L7 traffic, status codes</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Production Prometheus rules</h3>
+      <ul>
+        <li><strong>Retention:</strong> 30 days local, longer in object storage. Cardinality is the cost driver.</li>
+        <li><strong>Cardinality:</strong> <code>http_requests_total</code> with <code>path</code> and <code>user_id</code> labels is a footgun.</li>
+        <li><strong>Sharding:</strong> at scale, split Prometheus into multiple shards.</li>
+        <li><strong>Recording rules:</strong> precompute expensive queries.</li>
+      </ul>
+
+      <h2>8.3 Logs</h2>
+      <h3>Log patterns</h3>
+      <ul>
+        <li><strong>Node-level:</strong> kubelet writes to <code>/var/log/containers/</code> or <code>/var/log/pods/</code>.</li>
+        <li><strong>Sidecar pattern:</strong> sidecar tails stdout, forwards to log store. Heavy at scale.</li>
+        <li><strong>Node-level agent:</strong> DaemonSet (Fluent Bit, Vector, Filebeat). <strong>Production default.</strong></li>
+        <li><strong>Cloud integration:</strong> GKE → Cloud Logging; EKS → CloudWatch; AKS → Log Analytics.</li>
+      </ul>
+
+      <div class="callout callout-rule"><div class="callout-title">Structured logging</div><p>Production logs must be JSON. Stdout from <code>app.log("user signed in")</code> is unactionable. Stdout from <code>app.log({event: "user_signed_in", user_id: 123})</code> is searchable, aggregatable, alertable.</p></div>
+
+      <h2>8.4 Traces</h2>
+      <p>Distributed tracing correlates a request across services. <strong>OpenTelemetry</strong> is the standard.</p>
+      <div class="mermaid">
+flowchart LR
+    A["service A<br/>OTel SDK"] --> C["OTel Collector"]
+    B["service B<br/>OTel SDK"] --> C
+    E["service C<br/>OTel SDK"] --> C
+    C --> T[Tempo / Jaeger]
+    style C fill:#1f6feb22,stroke:#58a6ff
+      </div>
+
+      <h3>Sampling</h3>
+      <ul>
+        <li><strong>Head-based</strong> — decides at request start. Easy, predictable.</li>
+        <li><strong>Tail-based</strong> — decides after the request, based on outcome. Catches rare errors. Harder to scale.</li>
+        <li>Start at 1-10%; 100% on error paths.</li>
+      </ul>
+
+      <h2>8.5 Events and Kubernetes-aware signals</h2>
+      <ul>
+        <li><strong>EventRouter</strong> — ships Events to a log store.</li>
+        <li><strong>kube-state-metrics</strong> — K8s state to Prometheus metrics.</li>
+      </ul>
+      <p>Useful alerts: Pod <code>CrashLoopBackOff</code> &gt; 5 min, <code>FailedScheduling</code>, Node <code>NotReady</code> &gt; 5 min, image pull errors.</p>
+
+      <h2>8.6 The four signals together — what "good" looks like</h2>
+      <p>A production service has metrics, logs, traces, and events. The signals must be correlated. Click a metric spike → see the traces → see the logs → see the events. This is the difference between 10-minute MTTR and 4-hour MTTR.</p>
+
+      <h2>8.8 Production failure modes (Part VIII)</h2>
+      <ul>
+        <li>Cardinality explosion.</li>
+        <li>Logging without trace context.</li>
+        <li>Alerts on every metric. Alert fatigue → real alerts ignored.</li>
+        <li>Logs in the container filesystem.</li>
+        <li>No SLO definition.</li>
+        <li>Health checks failing logged at ERROR.</li>
+        <li>No event capture.</li>
+        <li>Sampling 0% in production.</li>
+        <li>Sampling 100% in production. Bill of $200k/month.</li>
+      </ul>
+
+      <h2>8.9 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>Self-managed Prom + Loki + Tempo</td><td>Cost-sensitive, ops capacity</td><td>Small team, no Grafana expertise</td></tr>
+          <tr><td>Datadog</td><td>Need everything working tomorrow</td><td>Cost-sensitive at scale</td></tr>
+          <tr><td>Grafana Cloud</td><td>Self-managed-ish but not hosted-on-call</td><td>Pure OSS requirement</td></tr>
+          <tr><td>Tempo (traces)</td><td>Already on Loki/Prometheus</td><td>Need strong query power (Jaeger)</td></tr>
+          <tr><td>OpenTelemetry</td><td>Greenfield, new services</td><td>Deep OpenTracing investment</td></tr>
+          <tr><td>Tail-based sampling</td><td>Catch all errors</td><td>Cost-conscious</td></tr>
+        </tbody>
+      </table>
+
+      <h2>8.10 Further reading</h2>
+      <ul>
+        <li><a href="https://prometheus.io/docs/">Prometheus Documentation</a></li>
+        <li><a href="https://opentelemetry.io/docs/">OpenTelemetry</a></li>
+        <li><a href="https://grafana.com/oss/loki/">Loki</a></li>
+        <li><a href="https://grafana.com/oss/tempo/">Grafana Tempo</a></li>
+        <li><a href="https://sre.google/sre-book/monitoring-distributed-systems/">Google SRE Book — Monitoring Distributed Systems</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART IX ════════════════ -->
+    <article id="ix-reliability">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part IX</span></div>
+        <h1>Reliability &amp; Day-2 Operations</h1>
+        <p class="doc-tagline">The part that determines whether your on-call is survivable.</p>
+      </header>
+
+      <h2>9.1 Upgrades</h2>
+      <h3>Cluster upgrades</h3>
+      <p><strong>Production upgrade cadence: every 3-6 months.</strong> Lateness compounds (you can't skip minors).</p>
+      <p>Pre-upgrade checklist:</p>
+      <ol>
+        <li>Read release notes for every minor between current and target.</li>
+        <li>Run <code>pluto</code> and <code>kubectl-versions</code> to find deprecated APIs.</li>
+        <li>Read CNI, ingress, and operator upgrade notes.</li>
+        <li>Upgrade control plane first.</li>
+        <li>Upgrade node pools / node groups one at a time.</li>
+        <li>Verify after each step.</li>
+      </ol>
+
+      <h2>9.2 Backups and disaster recovery</h2>
+      <h3>What you back up</h3>
+      <table>
+        <thead><tr><th>Component</th><th>Why</th><th>Tool</th></tr></thead>
+        <tbody>
+          <tr><td><strong>etcd</strong></td><td>Source of truth for cluster state</td><td><code>etcdctl snapshot</code></td></tr>
+          <tr><td><strong>Persistent volumes</strong></td><td>Application data</td><td>CSI snapshots, Velero</td></tr>
+          <tr><td><strong>Git repos</strong></td><td>Config, manifests</td><td>GitHub/GitLab backup</td></tr>
+          <tr><td><strong>Secrets</strong></td><td>Encrypted secrets</td><td>Vault backup, cloud KMS</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Velero</h3>
+      <p>The de facto K8s backup tool. Backs up cluster resources + PV snapshots. <strong>Schedule daily; retain 7 daily + 4 weekly + 12 monthly.</strong> Test restores quarterly.</p>
+
+      <h3>etcd backups</h3>
+      <pre><code><span class="k">ETCDCTL_API</span>=<span class="n">3</span> <span class="k">etcdctl</span> snapshot save /backup/etcd-$(date +%F).db \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key</code></pre>
+      <div class="callout callout-rule"><div class="callout-title">Production rules</div><ul><li>Snapshot every 15 minutes to object storage.</li><li>Encrypt backups (KMS).</li><li>Test restore in a sandboxed cluster quarterly.</li><li>Document the restore procedure as a runbook.</li></ul></div>
+
+      <h3>Disaster recovery patterns</h3>
+      <table>
+        <thead><tr><th>RPO</th><th>RTO</th><th>Strategy</th></tr></thead>
+        <tbody>
+          <tr><td>5 min</td><td>1 hour</td><td>Hot standby cluster + async replication + Velero</td></tr>
+          <tr><td>1 hour</td><td>4 hours</td><td>Backup to object store + Velero + runbook restore</td></tr>
+          <tr><td>24 hours</td><td>24 hours</td><td>Daily backups + cold restore</td></tr>
+        </tbody>
+      </table>
+
+      <h2>9.3 Capacity planning</h2>
+      <h3>What to measure</h3>
+      <ul>
+        <li>CPU and memory usage at node level (cluster utilisation ~70% before scaling).</li>
+        <li>Pod count vs node capacity.</li>
+        <li>Storage usage trends.</li>
+        <li>Network bandwidth.</li>
+      </ul>
+      <p>Most prod clusters should run at <strong>~65-75% cluster CPU</strong>, <strong>~70% memory</strong>, with <strong>5-10% node headroom</strong>.</p>
+
+      <h2>9.4 Chaos engineering</h2>
+      <h3>Tools</h3>
+      <table>
+        <thead><tr><th>Tool</th><th>Use</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Chaos Mesh</strong></td><td>Pod kill, network partition, IO fault, time skew</td></tr>
+          <tr><td><strong>LitmusChaos</strong></td><td>Broader, with experiments and probes</td></tr>
+          <tr><td><strong>Gremlin</strong></td><td>SaaS, broad fault library</td></tr>
+          <tr><td><strong>AWS Fault Injection Service</strong></td><td>AWS-native, region/zone faults</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Production chaos rules</h3>
+      <ol>
+        <li>Start in non-prod.</li>
+        <li>Start small.</li>
+        <li>Have a blast radius cap.</li>
+        <li>Stop conditions.</li>
+        <li>Hypothesis-driven.</li>
+        <li>Game days.</li>
+      </ol>
+
+      <h2>9.5 Incident response</h2>
+      <h3>Runbooks</h3>
+      <p>Every alert needs a runbook. The runbook should: link from the alert; tell you what to check first; tell you what to do; tell you when to escalate.</p>
+
+      <h3>Postmortems</h3>
+      <p>Blameless. Focus on timeline (facts), root cause (not "human error" — that's a process gap), contributing factors, action items.</p>
+
+      <h2>9.8 Production failure modes (Part IX)</h2>
+      <ul>
+        <li>No upgrade plan.</li>
+        <li>No etcd backup tested.</li>
+        <li>No chaos testing.</li>
+        <li>Runbooks out of date.</li>
+        <li>Capacity plans in spreadsheets.</li>
+        <li>No cost alerts.</li>
+        <li>PDB unset.</li>
+        <li>No game days.</li>
+        <li>Blameless postmortems, blameful culture.</li>
+      </ul>
+
+      <h2>9.9 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>Upgrade every 3 months</td><td>Disciplined team, can keep up</td><td>Understaffed, falling behind already</td></tr>
+          <tr><td>Upgrade every 6 months</td><td>Default</td><td>—</td></tr>
+          <tr><td>Upgrade once a year</td><td>Stable non-prod</td><td>Anything customer-facing</td></tr>
+          <tr><td>Hot standby DR</td><td>Critical workloads, low RPO/RTO</td><td>Cost-sensitive</td></tr>
+          <tr><td>Velero for backups</td><td>Default for prod</td><td>Cloud-native DBs handle their own</td></tr>
+          <tr><td>Chaos Mesh / LitmusChaos</td><td>Adopted chaos practice</td><td>Not adopted — don't install it</td></tr>
+        </tbody>
+      </table>
+
+      <h2>9.10 Further reading</h2>
+      <ul>
+        <li><a href="https://kubernetes.io/releases/">Kubernetes Release Cycle</a></li>
+        <li><a href="https://velero.io/docs/">Velero Documentation</a></li>
+        <li><a href="https://etcd.io/docs/v3.5/op-guide/recovery/">etcd Disaster Recovery</a></li>
+        <li><a href="https://litmuschaos.io/">LitmusChaos</a></li>
+        <li><a href="https://sre.google/sre-book/table-of-contents/">Google SRE Book</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART X ════════════════ -->
+    <article id="x-multi-cluster">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part X</span></div>
+        <h1>Multi-Cluster &amp; Federation</h1>
+        <p class="doc-tagline">Most production setups eventually need more than one cluster. The question is <em>why</em>, and what pattern fits.</p>
+      </header>
+
+      <h2>10.1 Why multiple clusters?</h2>
+      <table>
+        <thead><tr><th>Reason</th><th>Examples</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Region/zone isolation</strong></td><td>Reduce blast radius; data residency</td></tr>
+          <tr><td><strong>Compliance</strong></td><td>GDPR data stays in EU; FedRAMP workloads segregated</td></tr>
+          <tr><td><strong>Separation of concerns</strong></td><td>Prod vs staging; per-team clusters</td></tr>
+          <tr><td><strong>Cost</strong></td><td>Different node types, spot vs on-demand</td></tr>
+          <tr><td><strong>Burst capacity</strong></td><td>Primary region + overflow</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout callout-rule"><div class="callout-title">Caveat</div><p>If your reason is "HA," a single multi-AZ cluster usually suffices. <strong>Multiple clusters add operational cost; have a real reason.</strong></p></div>
+
+      <h2>10.3 Patterns</h2>
+      <h3>Pattern 1: Independent clusters, same Git</h3>
+      <p>Each cluster has its own Argo/Flux installation. Git repo has per-cluster directories.</p>
+
+      <h3>Pattern 2: Cluster API (CAPI)</h3>
+      <p>A <code>Cluster</code> CRD, a control-plane <code>KubeadmControlPlane</code>, a <code>MachineDeployment</code>. The management cluster creates and reconciles workload clusters.</p>
+
+      <h3>Pattern 3: Hub-and-spoke with Submariner or Skupper</h3>
+      <p>Multiple clusters that need network connectivity at the application layer. Submariner (L3) and Skupper (L7) provide cross-cluster Pod-to-Pod networking.</p>
+
+      <h3>Pattern 4: Multi-cluster service mesh</h3>
+      <p>Istio and Linkerd can span multiple clusters as one mesh. Enables cross-cluster failover, geographic traffic routing, shared identity.</p>
+
+      <h2>10.5 Multi-cluster state</h2>
+      <h3>Active-passive</h3>
+      <div class="mermaid">
+flowchart LR
+    A["Cluster A<br/>primary DB"] -->|replication| B["Cluster B<br/>standby DB"]
+    A --> RW[Reads/Writes]
+    B --> R[Reads only]
+    style A fill:#3fb95022,stroke:#3fb950
+    style B fill:#1f6feb22,stroke:#58a6ff
+      </div>
+
+      <h3>Active-active</h3>
+      <div class="mermaid">
+flowchart LR
+    A["Cluster A<br/>DB primary for user_id%2==0"] --> W["Writes from sharded users"]
+    B["Cluster B<br/>DB primary for user_id%2==1"] --> W
+    style A fill:#3fb95022,stroke:#3fb950
+    style B fill:#3fb95022,stroke:#3fb950
+      </div>
+
+      <h2>10.6 Disaster recovery patterns</h2>
+      <table>
+        <thead><tr><th>Tier</th><th>RPO</th><th>RTO</th><th>Approach</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>Hours-days</td><td>Hours-days</td><td>Backups + Velero + manual runbook</td></tr>
+          <tr><td>1</td><td>Minutes</td><td>&lt; 1 hour</td><td>Async cross-region replication + runbook failover</td></tr>
+          <tr><td>2</td><td>Seconds</td><td>Seconds</td><td>Sync replication + automated failover</td></tr>
+          <tr><td>3</td><td>Zero</td><td>Zero</td><td>Active-active multi-region</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Most companies don't need tier 3</div><p>Tier 0 or 1 covers &gt;90% of real-world needs. Tier 2-3 are for fintech, healthcare, or compliance-mandated workloads where downtime = breach.</p></div>
+
+      <h2>10.7 Cluster lifecycle</h2>
+      <h3>Cluster bootstrap</h3>
+      <p><code>kubeadm</code>, <code>kops</code>, <code>Cluster API</code>, or managed (EKS/GKE/AKS). The new normal:</p>
+      <ol>
+        <li>Define cluster as code (terraform, Cluster API).</li>
+        <li>Bootstrap via GitOps (Argo/Flux installed by bootstrap script, then takes over).</li>
+        <li>Day-2 managed by the same GitOps repo.</li>
+      </ol>
+
+      <h2>10.9 Production failure modes (Part X)</h2>
+      <ul>
+        <li>Multi-cluster added without a real reason.</li>
+        <li>Cross-cluster dependencies that create coupling.</li>
+        <li>Different Kubernetes versions per cluster.</li>
+        <li>No cluster inventory.</li>
+        <li>Inconsistent security posture.</li>
+        <li>DNS as a single point of failure.</li>
+      </ul>
+
+      <h2>10.10 Decision table</h2>
+      <table>
+        <thead><tr><th>Choice</th><th>Pick when</th><th>Avoid when</th></tr></thead>
+        <tbody>
+          <tr><td>Single multi-AZ cluster</td><td>HA, simple</td><td>Compliance, data residency</td></tr>
+          <tr><td>Multi-cluster independent</td><td>Real isolation, easy ops</td><td>Few workloads, high coupling</td></tr>
+          <tr><td>Cluster API</td><td>Many clusters, want declarative lifecycle</td><td>Single cluster or two</td></tr>
+          <tr><td>Cross-cluster service mesh</td><td>Active-active, many services spanning</td><td>Simpler topologies</td></tr>
+          <tr><td>Active-passive DR</td><td>Cost-sensitive, RPO &gt; minutes</td><td>Real-time failover needed</td></tr>
+          <tr><td>Active-active DR</td><td>Critical, compliance</td><td>High cost, complexity</td></tr>
+        </tbody>
+      </table>
+
+      <h2>10.11 Further reading</h2>
+      <ul>
+        <li><a href="https://cluster-api.sigs.k8s.io/">Cluster API</a></li>
+        <li><a href="https://submariner.io/">Submariner</a></li>
+        <li><a href="https://github.com/kubernetes-sigs/about-multicluster">Multi-cluster Sig</a></li>
+      </ul>
+    </article>
+
+    <hr>
+
+    <!-- ════════════════ PART XI ════════════════ -->
+    <article id="xi-decisions">
+      <header class="doc-header">
+        <div class="doc-meta"><span class="doc-pill">Part XI</span></div>
+        <h1>Production Decision Framework</h1>
+        <p class="doc-tagline">This is the part you bookmark. Field guide for RFCs, design reviews, and incident calls.</p>
+      </header>
+
+      <h2>11.1 The maturity model</h2>
+      <table>
+        <thead><tr><th>Level</th><th>State</th></tr></thead>
+        <tbody>
+          <tr><td><strong>0: Chaotic</strong></td><td>Single dev cluster. No prod cluster. Manual everything. No monitoring, no backups, no CI/CD.</td></tr>
+          <tr><td><strong>1: Basic production</strong></td><td>Managed Kubernetes. Helm/Kustomize. Some metrics. No GitOps; manual promotion.</td></tr>
+          <tr><td><strong>2: Operational</strong></td><td>GitOps in place. Observability stack. CI builds images, signs them. RBAC and NetworkPolicy enforced. PodSecurity <code>restricted</code>. PDBs set.</td></tr>
+          <tr><td><strong>3: Reliable</strong></td><td>Multi-AZ HA, DR tested. Progressive delivery. Chaos engineering. SLOs defined. Compliance posture. On-call, runbooks, blameless postmortems.</td></tr>
+          <tr><td><strong>4: Resilient and cost-efficient</strong></td><td>Active-active multi-region or tested DR. Cluster API. Spot/preemptible. Multi-cluster GitOps.</td></tr>
+          <tr><td><strong>5: Predictive</strong></td><td>Continuous profiling driving performance and cost. ML-driven autoscaling. Self-healing infrastructure.</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Where to aim</div><p>Most production teams should aim for Level 3. Levels 4-5 are for mature platform teams with a real product to defend.</p></div>
+
+      <h2>11.2 The RFC checklist</h2>
+      <h3>Architecture</h3>
+      <ul>
+        <li>What does the cluster topology look like? Multi-AZ? Multi-region?</li>
+        <li>Does this fit existing patterns (Deployment + HPA + PDB + Service + Ingress)?</li>
+        <li>Does this need a CRD / Operator?</li>
+        <li>How does this interact with the CNI policy and NetworkPolicies?</li>
+      </ul>
+      <h3>Workload</h3>
+      <ul>
+        <li>Is it stateless? If stateful, what's the storage strategy?</li>
+        <li>What are the resource requests and limits, and how were they chosen?</li>
+        <li>Are health checks (startup, readiness, liveness) defined correctly?</li>
+        <li>Is there a PDB? Are <code>maxSurge</code>/<code>maxUnavailable</code> set?</li>
+        <li>What's the rollout strategy? Can we roll back?</li>
+      </ul>
+      <h3>Scaling</h3>
+      <ul>
+        <li>What metric drives scaling? CPU, custom, queue depth?</li>
+        <li>What's the minimum replica count? Enough to survive one node failure?</li>
+        <li>Does this interact with the cluster autoscaler / Karpenter?</li>
+        <li>Is there a scale-down stabilisation window?</li>
+      </ul>
+      <h3>Security</h3>
+      <ul>
+        <li>What Pod Security Standard level? <code>restricted</code>?</li>
+        <li>What ServiceAccount? Specific or default?</li>
+        <li>Are Secrets mounted as files or env vars? Where do they come from?</li>
+        <li>Are images signed? Scanned?</li>
+        <li>Does the workload need privileged? Can it be avoided?</li>
+        <li>What NetworkPolicies apply? Egress allowed?</li>
+      </ul>
+      <h3>Observability</h3>
+      <ul>
+        <li>What are the SLIs (rate, errors, duration, saturation)?</li>
+        <li>Are alerts defined? Runbook linked?</li>
+        <li>Are logs structured? Trace context propagated?</li>
+        <li>What dashboards will this show up on?</li>
+      </ul>
+      <h3>Reliability</h3>
+      <ul>
+        <li>What's the SLO target?</li>
+        <li>What's the rollback plan?</li>
+        <li>What's the failure mode?</li>
+        <li>Has chaos testing been done? Game day planned?</li>
+        <li>Are dependencies monitored? What if the DB is slow?</li>
+      </ul>
+      <h3>Cost</h3>
+      <ul>
+        <li>What node type does this run on?</li>
+        <li>Right-sized or oversized? VPA recommendations?</li>
+        <li>Spot-eligible?</li>
+        <li>What's the per-month cost?</li>
+      </ul>
+      <h3>Day-2</h3>
+      <ul>
+        <li>Upgrade path documented?</li>
+        <li>Backup covered? Tested?</li>
+        <li>Runbook for common failures?</li>
+        <li>Who owns this on-call?</li>
+      </ul>
+
+      <h2>11.3 The "Should we even Kubernetes this?" decision tree</h2>
+      <div class="mermaid">
+flowchart TD
+    Q1{"Many services sharing infra?"}
+    Q1 -->|No| R1["Consider PaaS<br/>Fly, Railway, Cloud Run, ECS Fargate"]
+    Q1 -->|Yes| Q2{"Platform team willing to own control plane?"}
+    Q2 -->|No| R2["Managed Kubernetes<br/>EKS/GKE/AKS"]
+    Q2 -->|Yes| Q3{"Heterogeneous workloads?<br/>services + batch + stateful"}
+    Q3 -->|No| R3["Single-purpose cluster<br/>or simpler"]
+    Q3 -->|Yes| Q4{"Need cluster-wide policy,<br/>mTLS, multi-tenancy?"}
+    Q4 -->|No| R4["Single cluster, simple stack"]
+    Q4 -->|Yes| R5["Kubernetes, multi-cluster if needed"]
+    style R5 fill:#3fb95022,stroke:#3fb950
+      </div>
+
+      <h2>11.4 Managed vs self-managed</h2>
+      <table>
+        <thead><tr><th>Factor</th><th>Managed (EKS/GKE/AKS)</th><th>Self-managed</th></tr></thead>
+        <tbody>
+          <tr><td>Cost</td><td>Premium for control plane</td><td>Cheaper compute, more ops cost</td></tr>
+          <tr><td>Control</td><td>Version, networking somewhat constrained</td><td>Full control</td></tr>
+          <tr><td>Upgrades</td><td>One-click, version cadence</td><td>You drive, you decide</td></tr>
+          <tr><td>Security</td><td>Cloud patches control plane</td><td>You patch</td></tr>
+          <tr><td>Networking</td><td>Cloud-native (VPC, IAM)</td><td>BYO CNI, complex</td></tr>
+          <tr><td>Ops cost</td><td>Low</td><td>High</td></tr>
+          <tr><td>Vendor lock</td><td>Some</td><td>None</td></tr>
+        </tbody>
+      </table>
+      <div class="callout callout-rule"><div class="callout-title">Default</div><p>Managed. Switch to self-managed only when you have a real, articulable reason (compliance, cost at scale, custom control plane).</p></div>
+
+      <h2>11.5 Anti-patterns summary</h2>
+      <table>
+        <thead><tr><th>Anti-pattern</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td>No PDBs</td><td>Outages during routine maintenance</td></tr>
+          <tr><td>No priority classes</td><td>Critical apps evicted for dev</td></tr>
+          <tr><td>Liveness probe too aggressive</td><td>Cascading restarts</td></tr>
+          <tr><td>Memory limits without profiling</td><td>OOM kills during normal load</td></tr>
+          <tr><td>HPA on CPU only</td><td>Doesn't scale for actual demand</td></tr>
+          <tr><td>No NetworkPolicy</td><td>Lateral movement on compromise</td></tr>
+          <tr><td>Privileged containers</td><td>Container escape = node root</td></tr>
+          <tr><td>Default ServiceAccount</td><td>Token leak = cluster-wide access</td></tr>
+          <tr><td>Secrets as env vars</td><td>Visible in describe, crash dumps</td></tr>
+          <tr><td>Image pull policy <code>Always</code> + mutable tags</td><td>Unpredictable deploys</td></tr>
+          <tr><td>No etcd backups tested</td><td>Cluster down = unrecoverable</td></tr>
+          <tr><td>Self-managed cluster without ops team</td><td>2am pages for control-plane issues</td></tr>
+          <tr><td>Hardcoded config in YAML</td><td>Per-env explosion, no override</td></tr>
+          <tr><td>No admission policy</td><td>Anyone can deploy anything</td></tr>
+          <tr><td>No SLO</td><td>Alerts without priority, alert fatigue</td></tr>
+          <tr><td>Logs to stdout without structure</td><td>Unsearchable</td></tr>
+          <tr><td>CronJob without <code>concurrencyPolicy: Forbid</code></td><td>Overlapping runs</td></tr>
+          <tr><td>StatefulSet without operator</td><td>Manual failover, manual backups</td></tr>
+          <tr><td>Single cluster without DR</td><td>Region failure = company failure</td></tr>
+          <tr><td>DR plan not tested</td><td>First real failure = discovery moment</td></tr>
+        </tbody>
+      </table>
+
+      <h2>11.6 The questions to ask before every production decision</h2>
+      <h3>For a new service</h3>
+      <ol>
+        <li>What's its SLO? (Don't answer "high availability" — give me a number.)</li>
+        <li>What's its blast radius? (How many users are affected if it's down?)</li>
+        <li>What's its failure mode? (What happens when this dies?)</li>
+        <li>Who owns it on-call?</li>
+      </ol>
+      <h3>For a new dependency</h3>
+      <ol>
+        <li>What does it cost if it's slow?</li>
+        <li>What does it cost if it's wrong?</li>
+        <li>How do we know it's broken before users do?</li>
+      </ol>
+      <h3>For an architectural change</h3>
+      <ol>
+        <li>What's the rollback story?</li>
+        <li>What's the failure mode? (Worst case?)</li>
+        <li>Have we tested the failure mode?</li>
+        <li>Does this need a game day?</li>
+      </ol>
+      <h3>For an incident</h3>
+      <ol>
+        <li>What's the user impact right now?</li>
+        <li>What's the smallest mitigation?</li>
+        <li>Can we rollback?</li>
+        <li>What's the trigger?</li>
+      </ol>
+      <h3>For a cost decision</h3>
+      <ol>
+        <li>What's the per-month cost? Per-year? Per-user? Per-request?</li>
+        <li>Is this an optimisation or a tax?</li>
+        <li>Who pays? Who benefits?</li>
+      </ol>
+
+      <h2>11.7 The "production-ready" checklist</h2>
+      <p>A service is production-ready when:</p>
+      <ul>
+        <li>Deployed via GitOps.</li>
+        <li>Has resource requests and limits set.</li>
+        <li>Has PDB.</li>
+        <li>Has priority class.</li>
+        <li>Has startup, readiness, liveness probes.</li>
+        <li>Logs are structured JSON with trace_id.</li>
+        <li>Exposes Prometheus metrics (RED + saturation).</li>
+        <li>Alerts tied to SLO burn.</li>
+        <li>Runbook exists.</li>
+        <li>Image scanned and signed.</li>
+        <li>ServiceAccount scoped.</li>
+        <li>NetworkPolicy in place.</li>
+        <li>Secrets from external store (Vault, cloud KMS).</li>
+        <li>Health checked at least weekly (synthetic).</li>
+        <li>Owner and on-call rotation defined.</li>
+        <li>Capacity forecast exists.</li>
+      </ul>
+
+      <h2>11.8 Closing</h2>
+      <p>Kubernetes is a substrate, not a product. It gives you a powerful set of primitives and an operational model. Whether it works for you depends entirely on what you build on top.</p>
+      <p>The architecture and design decisions in this reference aren't the only path. They're the path that survived production. When you deviate, document why; the next engineer on the team needs to know.</p>
+      <p>When something goes wrong — and it will — the answer is rarely "more Kubernetes." It's usually "fewer things, tested, observable, with humans who know what to do."</p>
+    </article>
+
+    <div class="doc-footer">
+      <span>Kubernetes in Production · Architecture &amp; Design Reference</span>
+      <button class="back-to-top" onclick="window.scrollTo({top: 0, behavior: 'smooth'})">↑ Back to top</button>
+    </div>
+
+  </main>
+</div>
+
+<!-- Mermaid from CDN -->
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+<script>
+  // Mermaid init
+  if (window.mermaid) {
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        background: '#0d1117',
+        primaryColor: '#1f6feb',
+        primaryTextColor: '#c9d1d9',
+        primaryBorderColor: '#58a6ff',
+        lineColor: '#8b949e',
+        secondaryColor: '#161b22',
+        tertiaryColor: '#0d1117',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+      },
+      flowchart: {
+        curve: 'basis',
+        padding: 12
+      }
+    });
+  }
+
+  // Sidebar scroll spy + active state
+  const sections = document.querySelectorAll('article[id]');
+  const navLinks = document.querySelectorAll('.nav-link');
+
+  const spy = () => {
+    let current = '';
+    const scrollPos = window.scrollY + 120;
+    sections.forEach(s => {
+      if (s.offsetTop <= scrollPos) current = s.id;
+    });
+    navLinks.forEach(l => {
+      l.classList.remove('active');
+      if (l.getAttribute('href') === '#' + current) l.classList.add('active');
+    });
+  };
+  window.addEventListener('scroll', spy, { passive: true });
+  spy();
+
+  // Search filter
+  const search = document.getElementById('search');
+  const nav = document.getElementById('nav');
+  search.addEventListener('input', e => {
+    const q = e.target.value.toLowerCase().trim();
+    nav.querySelectorAll('.nav-link').forEach(link => {
+      const txt = link.textContent.toLowerCase();
+      link.parentElement.style.display = (!q || txt.includes(q)) ? '' : 'none';
+    });
+  });
+
+  // Keyboard shortcut: Ctrl/Cmd + K focuses search
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+      e.preventDefault();
+      search.focus();
+      search.select();
+    }
+    if (e.key === 'Escape' && document.activeElement === search) {
+      search.value = '';
+      search.dispatchEvent(new Event('input'));
+      search.blur();
+    }
+  });
+</script>
+</body>
+</html>
