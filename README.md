@@ -7,6 +7,7 @@ A collection of artifacts for learning and operating Kubernetes in production.
 | [`k8s-prod-reference/`](./k8s-prod-reference/) | 11-part architecture & design reference (~5,000 lines, dark-themed HTML viewer) | [`k8s-prod-reference/index.html`](./k8s-prod-reference/index.html) |
 | [`kube-prod-audit/`](./kube-prod-audit/) | Production-readiness audit tool: 30 checks across workloads, security, reliability, observability, resources, storage, network. Outputs terminal summary + HTML report | `python -m kube_prod_audit --mode demo` |
 | [`tooling-deep-dives/`](./tooling-deep-dives/) | 8 deep-dives with production-ready YAML for cert-manager, External Secrets, Kyverno, Argo CD, Argo Rollouts, Velero, Falco, kube-prometheus-stack | [`tooling-deep-dives/index.html`](./tooling-deep-dives/index.html) |
+| [`k8s-platform-lab/`](./k8s-platform-lab/) | Hands-on lab environment: kind cluster setup, 6 labs (CRI, Cilium CNI, eBPF, cost placement, GPU scheduling, drain chaos), 2 postmortems, dashboards, scripts | `cd k8s-platform-lab && ./scripts/up.sh` |
 
 ## How they fit together
 
@@ -15,10 +16,12 @@ k8s-prod-reference/    ←── architecture & decisions ("why X? when?")
         │
         ├── tool deep-dives ("how to install X")  ──→  tooling-deep-dives/
         │
-        └── production-ready checklist ("is my cluster there?")  ──→  kube-prod-audit/
+        ├── production-ready checklist ("is my cluster there?")  ──→  kube-prod-audit/
+        │
+        └── hands-on lab ("let me try it")  ──→  k8s-platform-lab/
 ```
 
-**Reference** is the textbook. **Tooling deep-dives** are the recipes. **kube-prod-audit** is the linter that scores how close you are to the reference's ideal.
+**Reference** is the textbook. **Tooling deep-dives** are the recipes. **kube-prod-audit** is the linter. **k8s-platform-lab** is the playground.
 
 ## Quick start
 
@@ -35,6 +38,11 @@ python3 -m kube_prod_audit --mode live --context prod-us-east-1
 
 # Tooling deep-dives — open the HTML
 xdg-open tooling-deep-dives/index.html
+
+# Hands-on lab — spin up a kind cluster and run the labs
+cd k8s-platform-lab
+./scripts/up.sh
+cat labs/01-cri-deep-dive.md   # follow the walkthrough
 ```
 
 ## Layout
@@ -56,11 +64,19 @@ k8-playground/
 │   │   ├── checks/__init__.py     # 30 production-readiness checks
 │   │   ├── report.py              # terminal + HTML renderers
 │   │   └── demo_data.py
-└── tooling-deep-dives/             # 8 deep-dives + viewer
+├── tooling-deep-dives/             # 8 deep-dives + viewer
+│   ├── README.md
+│   ├── 01-cert-manager.md .. 08-prometheus-stack.md
+│   ├── build_viewer.py             # Markdown → HTML
+│   └── index.html
+└── k8s-platform-lab/               # hands-on labs (kind cluster)
     ├── README.md
-    ├── 01-cert-manager.md .. 08-prometheus-stack.md
-    ├── build_viewer.py             # Markdown → HTML
-    └── index.html
+    ├── cluster.yaml                # kind config: single-node, GPU taint, zone label
+    ├── labs/                       # 6 walkthroughs
+    ├── postmortems/                # 2 incident writeups
+    ├── manifests/                  # starter manifests
+    ├── dashboards/                 # grafana dashboards + raw data
+    └── scripts/                    # up.sh, down.sh, cost-sim.py, etc.
 ```
 
 ## Source
