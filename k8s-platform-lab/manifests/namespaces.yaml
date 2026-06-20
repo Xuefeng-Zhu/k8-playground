@@ -1,0 +1,24 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab
+  labels: { purpose: hands-on-exercises }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: observability
+  labels: { purpose: ebp-and-cost-dashboard }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-workloads
+  labels: { purpose: gpu-mock-training }
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: envoy
+  labels: { purpose: ingress-and-mesh }
