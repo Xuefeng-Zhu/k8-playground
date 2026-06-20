@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>kube-prod-audit · demo-cluster</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Roboto, sans-serif;
+    background: #0d1117; color: #c9d1d9;
+    line-height: 1.6; font-size: 15px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 48px 32px 96px; }
+  @media (max-width: 700px) { .container { padding: 24px 16px 64px; } }
+
+  h1 { color: #f0f6fc; font-size: 32px; font-weight: 800; letter-spacing: -0.5px; margin-bottom: 4px; }
+  h2 { color: #f0f6fc; font-size: 22px; font-weight: 700; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 1px solid #30363d; display: flex; align-items: center; justify-content: space-between; }
+  h3 { color: #f0f6fc; font-size: 17px; font-weight: 600; margin: 16px 0 8px; }
+  p { margin: 8px 0; }
+  a { color: #58a6ff; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: ui-monospace, "SF Mono", monospace; background: #161b22; color: #ff7b72; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; border: 1px solid #21262d; }
+  hr { border: none; border-top: 1px solid #21262d; margin: 32px 0; }
+
+  /* Header / score panel */
+  .meta { color: #8b949e; font-size: 13px; margin-bottom: 24px; display: flex; gap: 12px; flex-wrap: wrap; }
+  .meta span { background: #161b22; padding: 3px 10px; border-radius: 999px; border: 1px solid #30363d; }
+
+  .score-panel {
+    background: linear-gradient(135deg, #161b22, #0d1117);
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 32px;
+    margin: 24px 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 32px;
+    align-items: center;
+  }
+  @media (max-width: 700px) { .score-panel { grid-template-columns: 1fr; text-align: center; } }
+
+  .score-num { font-size: 72px; font-weight: 800; line-height: 1; color: #f85149; }
+  .score-of { color: #8b949e; font-size: 18px; }
+  .score-label { font-size: 22px; font-weight: 700; color: #f0f6fc; }
+  .score-sub { color: #8b949e; font-size: 14px; margin-top: 4px; }
+
+  .score-stats { display: flex; gap: 24px; margin-top: 12px; flex-wrap: wrap; }
+  .score-stat { display: flex; align-items: baseline; gap: 6px; }
+  .score-stat .num { font-size: 28px; font-weight: 700; }
+  .score-stat .lbl { color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .score-stat.pass .num { color: #3fb950; }
+  .score-stat.warn .num { color: #d29922; }
+  .score-stat.fail .num { color: #f85149; }
+
+  /* Category grid */
+  .cat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 24px 0; }
+  .cat-card {
+    background: #161b22; border: 1px solid #30363d;
+    border-radius: 8px; padding: 16px;
+    transition: transform 0.15s, border-color 0.15s;
+  }
+  .cat-card:hover { transform: translateY(-2px); border-color: #58a6ff; text-decoration: none; }
+  .cat-card-name { color: #8b949e; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .cat-card-score { font-size: 28px; font-weight: 800; margin: 4px 0; }
+  .cat-card-counts { font-size: 12px; color: #8b949e; }
+  .cat-card-counts .pass { color: #3fb950; }
+  .cat-card-counts .warn { color: #d29922; }
+  .cat-card-counts .fail { color: #f85149; }
+
+  /* Section headings */
+  .cat-name { font-size: 22px; }
+  .cat-pills { display: flex; gap: 6px; }
+  .pill { font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; background: #0d1117; border: 1px solid #30363d; }
+  .pill.pass { color: #3fb950; border-color: #3fb95055; }
+  .pill.warn { color: #d29922; border-color: #d2992255; }
+  .pill.fail { color: #f85149; border-color: #f8514955; }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 8px 0 16px; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; font-size: 14px; }
+  thead { background: #161b22; }
+  th { text-align: left; padding: 10px 14px; color: #f0f6fc; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #30363d; }
+  td { padding: 12px 14px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr { transition: background 0.1s; }
+  tbody tr:hover { background: #161b22; }
+
+  .row-id { font-family: ui-monospace, "SF Mono", monospace; color: #8b949e; font-size: 12px; white-space: nowrap; }
+  .row-title { font-weight: 600; color: #f0f6fc; }
+  .row-detail { color: #8b949e; font-size: 13px; margin-top: 4px; }
+  .row-affected { margin-top: 6px; font-family: ui-monospace, "SF Mono", monospace; font-size: 12px; color: #c9d1d9; }
+  .row-affected .item { display: inline-block; background: #010409; border: 1px solid #30363d; border-radius: 4px; padding: 1px 6px; margin: 2px 4px 2px 0; }
+  .row-fix { margin-top: 6px; color: #8b949e; font-size: 13px; }
+  .row-fix strong { color: #58a6ff; }
+  .row-ref { font-size: 12px; color: #8b949e; }
+
+  .status { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; border: 1px solid; white-space: nowrap; }
+  .status.fail { color: #f85149; background: #f8514911; border-color: #f8514955; }
+  .status.warn { color: #d29922; background: #d2992211; border-color: #d2992255; }
+  .status.pass { color: #3fb950; background: #3fb95011; border-color: #3fb95055; }
+
+  /* Footer */
+  .footer { margin-top: 64px; padding-top: 24px; border-top: 1px solid #21262d; font-size: 13px; color: #6e7681; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+
+  @media print {
+    body { background: white; color: black; }
+    .score-panel, .cat-card, table { background: white !important; border-color: #d0d7de !important; }
+    h1, h2, h3, .row-title, th { color: black !important; }
+    a { color: #0550ae !important; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>kube-prod-audit</h1>
+    <div class="meta">
+      <span>cluster: <strong style="color: #f0f6fc">demo-cluster</strong></span>
+      <span>mode: demo</span>
+      <span>generated: 2026-06-18 19:21:52 UTC</span>
+    </div>
+
+    <div class="score-panel">
+      <div>
+        <div class="score-num">39<span class="score-of">/100</span></div>
+      </div>
+      <div>
+        <div class="score-label">Needs work</div>
+        <div class="score-sub">Based on 23 production-readiness checks</div>
+        <div class="score-stats">
+          <div class="score-stat pass"><span class="num">6</span><span class="lbl">pass</span></div>
+          <div class="score-stat warn"><span class="num">6</span><span class="lbl">warn</span></div>
+          <div class="score-stat fail"><span class="num">11</span><span class="lbl">fail</span></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <h2 style="border-bottom: none; margin-top: 16px;">By category</h2>
+  <div class="cat-grid">
+    
+        <a class="cat-card" href="#workloads">
+          <div class="cat-card-name">Workloads</div>
+          <div class="cat-card-score" style="color: #f85149">25%</div>
+          <div class="cat-card-counts">
+            <span class="pass">1</span> ·
+            <span class="warn">1</span> ·
+            <span class="fail">2</span>
+          </div>
+        </a>
+        <a class="cat-card" href="#security">
+          <div class="cat-card-name">Security</div>
+          <div class="cat-card-score" style="color: #f85149">0%</div>
+          <div class="cat-card-counts">
+            <span class="pass">0</span> ·
+            <span class="warn">1</span> ·
+            <span class="fail">6</span>
+          </div>
+        </a>
+        <a class="cat-card" href="#reliability">
+          <div class="cat-card-name">Reliability</div>
+          <div class="cat-card-score" style="color: #f85149">20%</div>
+          <div class="cat-card-counts">
+            <span class="pass">1</span> ·
+            <span class="warn">3</span> ·
+            <span class="fail">1</span>
+          </div>
+        </a>
+        <a class="cat-card" href="#observability">
+          <div class="cat-card-name">Observability</div>
+          <div class="cat-card-score" style="color: #3fb950">100%</div>
+          <div class="cat-card-counts">
+            <span class="pass">3</span> ·
+            <span class="warn">0</span> ·
+            <span class="fail">0</span>
+          </div>
+        </a>
+        <a class="cat-card" href="#resources">
+          <div class="cat-card-name">Resources</div>
+          <div class="cat-card-score" style="color: #f85149">0%</div>
+          <div class="cat-card-counts">
+            <span class="pass">0</span> ·
+            <span class="warn">1</span> ·
+            <span class="fail">1</span>
+          </div>
+        </a>
+        <a class="cat-card" href="#storage">
+          <div class="cat-card-name">Storage</div>
+          <div class="cat-card-score" style="color: #3fb950">100%</div>
+          <div class="cat-card-counts">
+            <span class="pass">1</span> ·
+            <span class="warn">0</span> ·
+            <span class="fail">0</span>
+          </div>
+        </a>
+        <a class="cat-card" href="#network">
+          <div class="cat-card-name">Network</div>
+          <div class="cat-card-score" style="color: #f85149">0%</div>
+          <div class="cat-card-counts">
+            <span class="pass">0</span> ·
+            <span class="warn">0</span> ·
+            <span class="fail">1</span>
+          </div>
+        </a>
+  </div>
+
+  <hr>
+
+  
+        <section class="cat">
+          <h2 id="workloads">
+            <span class="cat-name">Workloads</span>
+            <span class="cat-pills">
+              <span class="pill pass">1 pass</span>
+              <span class="pill warn">1 warn</span>
+              <span class="pill fail">2 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">WL-002</td>
+              <td>
+                <div class="row-title">Liveness probe defined</div>
+                <div class="row-detail">Without liveness, kubelet cannot detect a stuck process.</div>
+                <div class="row-affected"><span class="item">prod/legacy-billing/billing</span><span class="item">staging/api-staging/api</span></div>
+                <div class="row-fix"><strong>fix:</strong> Add a livenessProbe: HTTP /healthz or TCP socket.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#41-deployments-and-the-rolling-update-contract">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>2 container(s) without livenessProbe</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">WL-003</td>
+              <td>
+                <div class="row-title">Readiness probe defined</div>
+                <div class="row-detail">Without readiness, traffic can hit Pods that are not yet ready to serve.</div>
+                <div class="row-affected"><span class="item">prod/worker/worker</span><span class="item">prod/legacy-billing/billing</span><span class="item">staging/api-staging/api</span></div>
+                <div class="row-fix"><strong>fix:</strong> Add a readinessProbe on a path that becomes 200 only when the app is ready.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#41-deployments-and-the-rolling-update-contract">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>3 container(s) without readinessProbe</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">WL-004</td>
+              <td>
+                <div class="row-title">Minimum 2 replicas in prod</div>
+                <div class="row-detail">Single-replica deployments are not HA. One node failure = 0 replicas.</div>
+                <div class="row-affected"><span class="item">staging/api-staging (replicas=1)</span></div>
+                <div class="row-fix"><strong>fix:</strong> Set replicas: 2+ or use HPA with minReplicas &gt;= 2.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#43-horizontal-pod-autoscaler-hpa">reference</a></div>
+              </td>
+              <td><span class="status warn">warn</span></td>
+              <td>1 deployment(s) with < 2 replicas</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">WL-005</td>
+              <td>
+                <div class="row-title">Rolling update strategy</div>
+                <div class="row-detail">Recreate causes downtime during deploys.</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Use RollingUpdate with explicit maxSurge and maxUnavailable.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#41-deployments-and-the-rolling-update-contract">reference</a></div>
+              </td>
+              <td><span class="status pass">pass</span></td>
+              <td>All deployments use RollingUpdate or default</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="cat">
+          <h2 id="security">
+            <span class="cat-name">Security</span>
+            <span class="cat-pills">
+              <span class="pill pass">0 pass</span>
+              <span class="pill warn">1 warn</span>
+              <span class="pill fail">6 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">SC-001</td>
+              <td>
+                <div class="row-title">Pod Security Standard &#x27;restricted&#x27; in prod</div>
+                <div class="row-detail">PSS restricted is the production baseline; it blocks privileged, hostNetwork, etc.</div>
+                <div class="row-affected"><span class="item">staging (enforce=baseline)</span></div>
+                <div class="row-fix"><strong>fix:</strong> Set label pod-security.kubernetes.io/enforce=restricted on the namespace.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#62-pod-security-standards-pss">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>1 prod namespace(s) not enforcing 'restricted'</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">SC-002</td>
+              <td>
+                <div class="row-title">No privileged containers</div>
+                <div class="row-detail">A privileged container can escape to the host. Almost never required.</div>
+                <div class="row-affected"><span class="item">prod/legacy-billing/billing</span></div>
+                <div class="row-fix"><strong>fix:</strong> Drop privileged: true. Use specific capabilities (NET_ADMIN, SYS_TIME) if needed.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#68-runtime-security">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>1 privileged container(s)</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">SC-003</td>
+              <td>
+                <div class="row-title">runAsNonRoot: true on all containers</div>
+                <div class="row-detail">Containers running as root can read any file the kubelet can.</div>
+                <div class="row-affected"><span class="item">prod/worker/worker</span><span class="item">prod/legacy-billing/billing</span><span class="item">staging/api-staging/api</span><span class="item">prod/postgres/postgres</span><span class="item">monitoring/fluentbit/fluentbit</span></div>
+                <div class="row-fix"><strong>fix:</strong> Add runAsNonRoot: true and an explicit runAsUser (non-zero).</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#68-runtime-security">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>5 container(s) without runAsNonRoot</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">SC-004</td>
+              <td>
+                <div class="row-title">seccompProfile RuntimeDefault</div>
+                <div class="row-detail">seccomp reduces the kernel attack surface available to a compromised container.</div>
+                <div class="row-affected"><span class="item">prod/worker/worker</span><span class="item">prod/legacy-billing/billing</span><span class="item">staging/api-staging/api</span><span class="item">prod/postgres/postgres</span><span class="item">monitoring/fluentbit/fluentbit</span></div>
+                <div class="row-fix"><strong>fix:</strong> Set seccompProfile.type: RuntimeDefault.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#68-runtime-security">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>5 container(s) without RuntimeDefault seccomp</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">SC-005</td>
+              <td>
+                <div class="row-title">Workloads use a specific ServiceAccount, not &#x27;default&#x27;</div>
+                <div class="row-detail">A leaked &#x27;default&#x27; SA token gives cluster-scoped read in many setups.</div>
+                <div class="row-affected"><span class="item">prod/worker</span><span class="item">prod/legacy-billing</span><span class="item">staging/api-staging</span><span class="item">prod/postgres</span></div>
+                <div class="row-fix"><strong>fix:</strong> Create a ServiceAccount per app and reference it via spec.serviceAccountName.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#63-rbac">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>4 prod workload(s) using the default SA</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">SC-006</td>
+              <td>
+                <div class="row-title">automountServiceAccountToken disabled where unnecessary</div>
+                <div class="row-detail">Default automount means every Pod carries a token it probably doesn&#x27;t need.</div>
+                <div class="row-affected"><span class="item">prod/worker</span><span class="item">prod/legacy-billing</span><span class="item">staging/api-staging</span><span class="item">prod/postgres</span></div>
+                <div class="row-fix"><strong>fix:</strong> Set automountServiceAccountToken: false, or set a scoped ServiceAccount.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#64-serviceaccounts-and-tokens">reference</a></div>
+              </td>
+              <td><span class="status warn">warn</span></td>
+              <td>4 workload(s) with default token automount</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">SC-007</td>
+              <td>
+                <div class="row-title">No hardcoded secrets in env vars</div>
+                <div class="row-detail">Env-var secrets are visible in kubectl describe, crash dumps, and child processes.</div>
+                <div class="row-affected"><span class="item">prod/worker/worker/API_KEY</span></div>
+                <div class="row-fix"><strong>fix:</strong> Mount secrets as files via secretStore CSI / Vault, or use External Secrets Operator.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/06-security.md#65-secrets-management">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>1 hardcoded secret(s) in env</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="cat">
+          <h2 id="reliability">
+            <span class="cat-name">Reliability</span>
+            <span class="cat-pills">
+              <span class="pill pass">1 pass</span>
+              <span class="pill warn">3 warn</span>
+              <span class="pill fail">1 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">XX-000</td>
+              <td>
+                <div class="row-title">Check check_pdb_on_deployments failed to run</div>
+                <div class="row-detail">unhashable type: &#x27;dict&#x27;</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Check the audit logs.</div>
+                
+              </td>
+              <td><span class="status warn">warn</span></td>
+              <td>Internal error: TypeError</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">RL-001</td>
+              <td>
+                <div class="row-title">HA replica count (&gt;= 2 or HPA min &gt;= 2)</div>
+                <div class="row-detail">HA requires at least 2 replicas so one can fail without taking the service down.</div>
+                <div class="row-affected"><span class="item">staging/api-staging (replicas=1)</span></div>
+                <div class="row-fix"><strong>fix:</strong> Bump replicas to 2+ or set HPA minReplicas: 2.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#43-horizontal-pod-autoscaler-hpa">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>1 workload(s) below HA threshold</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">RL-002</td>
+              <td>
+                <div class="row-title">maxUnavailable won&#x27;t zero replicas</div>
+                <div class="row-detail">A maxUnavailable &gt;= replicas will zero the service during a deploy.</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Set maxUnavailable to 25% or less, or to an integer &lt; replicas.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#41-deployments-and-the-rolling-update-contract">reference</a></div>
+              </td>
+              <td><span class="status pass">pass</span></td>
+              <td>Rolling-update limits are within bounds</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">RL-003</td>
+              <td>
+                <div class="row-title">No recent OOMKilled events</div>
+                <div class="row-detail">OOMKilled means memory limits are too tight or there is a leak.</div>
+                <div class="row-affected"><span class="item">worker-abc</span></div>
+                <div class="row-fix"><strong>fix:</strong> Raise memory limits, or profile the app for a leak.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#42-resource-management">reference</a></div>
+              </td>
+              <td><span class="status warn">warn</span></td>
+              <td>1 OOMKilled event(s) in cluster</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">RL-004</td>
+              <td>
+                <div class="row-title">No FailedScheduling events</div>
+                <div class="row-detail">Pods that can&#x27;t be scheduled sit Pending — either resource shortage or affinity bug.</div>
+                <div class="row-affected"><span class="item">?</span></div>
+                <div class="row-fix"><strong>fix:</strong> Check node capacity, taints, and pod affinity. Investigate pending Pods.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/02-control-plane.md#25-the-scheduler-in-detail">reference</a></div>
+              </td>
+              <td><span class="status warn">warn</span></td>
+              <td>1 FailedScheduling event(s)</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="cat">
+          <h2 id="observability">
+            <span class="cat-name">Observability</span>
+            <span class="cat-pills">
+              <span class="pill pass">3 pass</span>
+              <span class="pill warn">0 warn</span>
+              <span class="pill fail">0 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">OB-001</td>
+              <td>
+                <div class="row-title">HPA configured for prod services</div>
+                <div class="row-detail">HPAs let you scale on metrics, not just replica counts.</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Add a HorizontalPodAutoscaler targeting your prod Deployments.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#43-horizontal-pod-autoscaler-hpa">reference</a></div>
+              </td>
+              <td><span class="status pass">pass</span></td>
+              <td>1 HPA(s) configured</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">OB-002</td>
+              <td>
+                <div class="row-title">Cluster-wide log shipper (DaemonSet)</div>
+                <div class="row-detail">Without a node-level log agent, container logs are lost on Pod restart.</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Install Fluent Bit, Vector, or Filebeat as a DaemonSet with tolerations.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/08-observability.md#83-logs">reference</a></div>
+              </td>
+              <td><span class="status pass">pass</span></td>
+              <td>Log shipper DaemonSet detected</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">OB-003</td>
+              <td>
+                <div class="row-title">Cluster metrics pipeline present</div>
+                <div class="row-detail">HPA, kubectl top, and many dashboards depend on metrics-server / kube-state-metrics.</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Install metrics-server and kube-state-metrics.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/08-observability.md#82-metrics-prometheus-and-the-ecosystem">reference</a></div>
+              </td>
+              <td><span class="status pass">pass</span></td>
+              <td>No metrics-server or kube-state-metrics detected</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="cat">
+          <h2 id="resources">
+            <span class="cat-name">Resources</span>
+            <span class="cat-pills">
+              <span class="pill pass">0 pass</span>
+              <span class="pill warn">1 warn</span>
+              <span class="pill fail">1 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">RS-001</td>
+              <td>
+                <div class="row-title">CPU and memory limits set</div>
+                <div class="row-detail">Without memory limits, a leak fills the node and gets the Pod OOM-killed.</div>
+                <div class="row-affected"><span class="item">prod/worker/worker</span><span class="item">prod/legacy-billing/billing</span><span class="item">monitoring/fluentbit/fluentbit</span></div>
+                <div class="row-fix"><strong>fix:</strong> Add resources.limits.cpu and resources.limits.memory for every container.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#42-resource-management">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>3 container(s) missing limits</td>
+            </tr>
+
+            <tr>
+              <td class="row-id">RS-002</td>
+              <td>
+                <div class="row-title">CPU and memory requests set</div>
+                <div class="row-detail">Requests drive scheduling. Without them, Pods are BestEffort and killed first.</div>
+                <div class="row-affected"><span class="item">prod/legacy-billing/billing</span></div>
+                <div class="row-fix"><strong>fix:</strong> Add resources.requests.cpu and resources.requests.memory.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/04-workloads-scaling.md#42-resource-management">reference</a></div>
+              </td>
+              <td><span class="status warn">warn</span></td>
+              <td>1 container(s) missing requests</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="cat">
+          <h2 id="storage">
+            <span class="cat-name">Storage</span>
+            <span class="cat-pills">
+              <span class="pill pass">1 pass</span>
+              <span class="pill warn">0 warn</span>
+              <span class="pill fail">0 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">ST-001</td>
+              <td>
+                <div class="row-title">All PVCs Bound</div>
+                <div class="row-detail">Pending PVCs mean the storage provisioner failed or the StorageClass is wrong.</div>
+                
+                <div class="row-fix"><strong>fix:</strong> Check StorageClass and CSI driver health; look for events on the PVC.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/05-storage.md#54-storageclass-and-dynamic-provisioning">reference</a></div>
+              </td>
+              <td><span class="status pass">pass</span></td>
+              <td>All PVCs are Bound</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+        <section class="cat">
+          <h2 id="network">
+            <span class="cat-name">Network</span>
+            <span class="cat-pills">
+              <span class="pill pass">0 pass</span>
+              <span class="pill warn">0 warn</span>
+              <span class="pill fail">1 fail</span>
+            </span>
+          </h2>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Check</th><th>Status</th><th>Findings</th></tr>
+            </thead>
+            <tbody>
+              
+            <tr>
+              <td class="row-id">NT-001</td>
+              <td>
+                <div class="row-title">NetworkPolicy in each prod namespace</div>
+                <div class="row-detail">Without a NetworkPolicy, all Pods can talk to all Pods (and the internet).</div>
+                <div class="row-affected"><span class="item">staging</span></div>
+                <div class="row-fix"><strong>fix:</strong> Add a default-deny NetworkPolicy per namespace, then allow only what you need.</div>
+                <div class="row-ref">→ <a href="../k8s-prod-reference/03-networking.md#36-networkpolicy">reference</a></div>
+              </td>
+              <td><span class="status fail">fail</span></td>
+              <td>1 prod namespace(s) without NetworkPolicy</td>
+            </tr>
+            </tbody>
+          </table>
+        </section>
+
+  <div class="footer">
+    <span>kube-prod-audit · part of the K8s in Production reference</span>
+    <span>Run: <code>python -m kube_prod_audit --mode demo</code></span>
+  </div>
+
+</div>
+</body>
+</html>
