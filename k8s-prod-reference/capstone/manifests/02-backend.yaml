@@ -1,0 +1,157 @@
+# Backend tier.
+#
+# Defends against: drain / rolling update disruption (lab 01) AND
+# load spikes (lab 04 production autoscaling, chapter 4).
+#
+# Key choices:
+#   - PodDisruptionBudget: minAvailable=1 (lab 01) — at least one
+#     backend replica must always be ready during voluntary disruptions
+#     (drains, node maintenance).
+#   - HorizontalPodAutoscaler: scales 2-5 replicas on CPU.
+#   - Resources set so HPA has a meaningful CPU% to read (you need
+#     requests for metrics-server to report utilization).
+#   - Same non-root securityContext as frontend (lab 05).
+#   - Service forwards to postgres (separate tier).
+#   - We don't run a real backend — nginx serves a placeholder page.
+#     The point is to demonstrate the scaling + PDB + readiness story,
+#     not to run a real API.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: capstone-backend
+  labels:
+    app: backend
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: backend
+      containers:
+      - name: nginx
+        image: nginxinc/nginx-unprivileged:1.27
+        ports:
+        - containerPort: 8080
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /
+            port: http
+          periodSeconds: 5
+          failureThreshold: 2
+        livenessProbe:
+          httpGet:
+            path: /
+            port: http
+          periodSeconds: 30
+          failureThreshold: 3
+          initialDelaySeconds: 30
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/sh
+              - -c
+              - "sleep 5"
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: cache
+          mountPath: /var/cache/nginx
+        - name: run
+          mountPath: /var/run
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: cache
+        emptyDir: {}
+      - name: run
+        emptyDir: {}
+      - name: tmp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: capstone-backend
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 80
+    targetPort: 8080
+  type: ClusterIP
+---
+# Lab 01: PDB holds the line during voluntary disruptions.
+# minAvailable=1 means at most 1 of 2 replicas can be unavailable.
+# When you `kubectl drain` a worker holding a backend pod, eviction
+# will be gated by the PDB — not by the deployment's grace period.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+  namespace: capstone-backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: backend
+---
+# Lab 04 / chapter 4: HPA reacts to load.
+# minReplicas=2 so we always have the PDB floor, maxReplicas=5
+# so a runaway HPA can't exhaust the cluster. Target 70% CPU.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend
+  namespace: capstone-backend
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70

@@ -1,0 +1,189 @@
+# Network policies — defense in depth.
+#
+# Defends against: any pod in the cluster reaching a tier it shouldn't
+# (chapter 3, lab 03-adjacent). With default-deny + explicit allows:
+#   - The frontend can't be reached from arbitrary namespaces
+#   - The backend can only be reached from the frontend namespace
+#   - The postgres can only be reached from the backend namespace
+#   - DNS works everywhere (kube-system / coredns is always allowed)
+#   - The kubelet on each node can reach every pod (for probes)
+#
+# Pattern: deploy a default-deny in each tier namespace, then add
+# explicit Ingress (and Egress if needed) rules. Same pattern as
+# `kubectl.kubernetes.io/default-deny: true` annotation in some
+# policy controllers, but done here as plain NetworkPolicy.
+---
+# Default-deny on the frontend tier
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: capstone-frontend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Frontend Ingress: allow traffic from anywhere on port 80 (NodePort / Ingress)
+# Tighten this in production to the specific source ranges you trust.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-public-ingress
+  namespace: capstone-frontend
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  - ports:
+    - port: 8080   # matches the unprivileged nginx containerPort
+      protocol: TCP
+---
+# Frontend Egress: only allow DNS + the backend Service
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-and-backend
+  namespace: capstone-frontend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  # DNS to kube-system
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  # Backend API
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - port: 80
+      protocol: TCP
+---
+# Default-deny on the backend tier
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: capstone-backend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Backend Ingress: only from the frontend namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend
+  namespace: capstone-backend
+spec:
+  podSelector:
+    matchLabels:
+      app: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tier: frontend
+    ports:
+    - port: 8080
+      protocol: TCP
+---
+# Backend Egress: DNS + postgres
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-and-postgres
+  namespace: capstone-backend
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          tier: data
+    ports:
+    - port: 5432
+      protocol: TCP
+---
+# Default-deny on the postgres tier
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: capstone-postgres
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+---
+# Postgres Ingress: only from the backend namespace, only on 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend
+  namespace: capstone-postgres
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - port: 5432
+      protocol: TCP
+---
+# Postgres Egress: only DNS (postgres doesn't make outbound calls)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-only
+  namespace: capstone-postgres
+spec:
+  podSelector: {}
+  policyTypes:
+  - Egress
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+    ports:
+    - port: 53
+      protocol: UDP
+    - port: 53
+      protocol: TCP

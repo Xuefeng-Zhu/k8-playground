@@ -1,0 +1,106 @@
+# Deliberately broken manifest — exercises 04.
+#
+# This manifest creates a NEW StorageClass with volumeBindingMode:
+# Immediate, then a StatefulSet that uses it. With Immediate binding,
+# the PVC binds to a zone BEFORE the pod schedules — if the topology
+# constraint can't find a node in that zone, the pod is stuck Pending
+# forever.
+#
+# To apply (during the exercise):
+#   kubectl apply -f broken-manifests/wrong-sc.yaml
+#   sleep 15
+#   kubectl -n capstone-broken-sc get pods,pvc -o wide
+#
+# What you'll see: the StatefulSet pod hangs in Pending, the PVC also
+# Pending (because local-path doesn't actually support Immediate).
+# Compare against capstone-postgres/postgres-0 which uses the safe
+# `standard` SC (WaitForFirstConsumer) and is running.
+#
+# This is the exact failure mode from lab 04 — but applied to the
+# running capstone so you can see the cascade: fronted can't reach
+# backend, backend can't reach postgres, app is broken.
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: broken-immediate
+provisioner: rancher.io/local-path
+reclaimPolicy: Delete
+volumeBindingMode: Immediate   # THE BUG
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: capstone-broken-sc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: capstone-broken-sc
+spec:
+  clusterIP: None
+  selector:
+    app: db
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+  namespace: capstone-broken-sc
+  labels:
+    app: db
+spec:
+  serviceName: db
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: db
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        - name: POSTGRES_PASSWORD
+          value: dev-only
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: broken-immediate   # THE BUG: Immediate binding
+      resources:
+        requests:
+          storage: 1Gi
