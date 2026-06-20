@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>k8s-platform-lab · cost + eBPF dashboard</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --good: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { padding: 18px 24px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 24px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; max-width: 1400px; margin: 0 auto; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px 20px; }
+  h2 { margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+  .pill.eu      { background: rgba(63,185,80,0.15);  color: var(--good); }
+  .pill.aws     { background: rgba(210,153,34,0.15); color: var(--warn); }
+  .pill.any     { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .pill.bad     { background: rgba(248,81,73,0.15);  color: var(--bad); }
+  .totals { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .totals .card { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .totals .card .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .totals .card .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  pre.metrics { background: #0a0d12; border: 1px solid var(--border); border-radius: 6px;
+                padding: 12px; font: 12px/1.4 ui-monospace, "JetBrains Mono", monospace;
+                max-height: 380px; overflow: auto; color: #c9d1d9; }
+  .empty { color: var(--muted); font-style: italic; }
+  .legend { color: var(--muted); font-size: 12px; margin-top: 8px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .conn-status { font-size: 12px; }
+  .conn-status.ok { color: var(--good); }
+  .conn-status.off { color: var(--muted); }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>k8s-platform-lab</h1>
+    <div class="meta">cost topology + eBPF / Hubble observability</div>
+  </div>
+  <div>
+    <span id="conn-status" class="conn-status off">hubble: not connected</span>
+    <span class="meta" style="margin-left: 16px;">refresh: <span id="last-refresh">never</span></span>
+  </div>
+</header>
+
+<main>
+
+  <!-- ========================================================== -->
+  <!-- COST TOPOLOGY (left half)                                  -->
+  <!-- ========================================================== -->
+  <section>
+    <h2>Cost topology</h2>
+    <p class="legend">Live placement from <code>scripts/cost-sim.py</code>. Edit
+      <code>data/cluster-pricing.json</code> and re-run
+      <code>python3 scripts/dashboard-data.py</code> to refresh.</p>
+    <div class="totals">
+      <div class="card">
+        <div class="label">Total $/hr</div>
+        <div class="value" id="total-hr">—</div>
+      </div>
+      <div class="card">
+        <div class="label">Projected $/month</div>
+        <div class="value" id="total-month">—</div>
+      </div>
+    </div>
+    <h2 style="margin-top: 18px;">Clusters</h2>
+    <table id="clusters-table">
+      <thead>
+        <tr><th>id</th><th>region</th><th>label</th><th class="num">$/hr</th></tr>
+      </thead>
+      <tbody><tr><td colspan="4" class="empty">loading…</td></tr></tbody>
+    </table>
+    <h2 style="margin-top: 18px;">Workloads</h2>
+    <table id="workloads-table">
+      <thead>
+        <tr><th>id</th><th>placement</th><th>kind</th><th>zone_pref</th><th class="num">$/hr</th></tr>
+      </thead>
+      <tbody><tr><td colspan="5" class="empty">loading…</td></tr></tbody>
+    </table>
+    <h2 style="margin-top: 18px;">Unschedulable</h2>
+    <div id="unsched-list"><span class="empty">none</span></div>
+  </section>
+
+  <!-- ========================================================== -->
+  <!-- EBPF / HUBBLE METRICS (right half)                         -->
+  <!-- ========================================================== -->
+  <section>
+    <h2>eBPF / Hubble metrics</h2>
+    <p class="legend">
+      Reads from a <code>kubectl port-forward</code> to
+      <code>cilium-agent:9965/metrics</code>. If you see "hubble: not connected",
+      start one with:
+    </p>
+    <pre class="metrics">kubectl --context kind-platform-lab \
+  -n kube-system port-forward ds/cilium 9965:9965</pre>
+    <h2 style="margin-top: 14px;">Top counters (live)</h2>
+    <pre class="metrics" id="metrics-output">hubble metrics not loaded yet…</pre>
+    <h2 style="margin-top: 14px;">eBPF programs on this node</h2>
+    <p class="legend">From <code>bpftool prog show</code> inside cilium-agent.
+      Refreshes every 30s via the script in
+      <code>scripts/bpf-prog-count.sh</code> (see README).</p>
+    <div class="totals" style="grid-template-columns: repeat(4, 1fr);">
+      <div class="card">
+        <div class="label">sched_cls</div>
+        <div class="value" id="bpfc-sched_cls">—</div>
+      </div>
+      <div class="card">
+        <div class="label">cgroup_skb</div>
+        <div class="value" id="bpfc-cgroup_skb">—</div>
+      </div>
+      <div class="card">
+        <div class="label">cgroup_sock_addr</div>
+        <div class="value" id="bpfc-cgroup_sock_addr">—</div>
+      </div>
+      <div class="card">
+        <div class="label">cgroup_device</div>
+        <div class="value" id="bpfc-cgroup_device">—</div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => (typeof n === "number") ? n.toLocaleString(undefined, {maximumFractionDigits: 2}) : n;
+
+async function loadCost() {
+  try {
+    const r = await fetch("data.json", {cache: "no-store"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();
+    $("last-refresh").textContent = d.generated_at;
+
+    $("total-hr").textContent   = "$" + fmt(d.totals.grand_hr);
+    $("total-month").textContent= "$" + fmt(d.totals.grand_month) + " (×720h)";
+
+    const ctBody = $("clusters-table").querySelector("tbody");
+    ctBody.innerHTML = "";
+    for (const c of d.clusters) {
+      const hr = d.totals.per_cluster_hr[c.id] || 0;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${c.id}</td><td>${c.region}</td><td>${c.label}</td>
+                      <td class="num">$${fmt(hr)}</td>`;
+      ctBody.appendChild(tr);
+    }
+
+    const wtBody = $("workloads-table").querySelector("tbody");
+    wtBody.innerHTML = "";
+    if (d.workloads.length === 0) {
+      wtBody.innerHTML = `<tr><td colspan="5" class="empty">no workloads</td></tr>`;
+    } else {
+      for (const w of d.workloads) {
+        const tr = document.createElement("tr");
+        const pillClass = w.zone_pref === "eu" ? "eu" : w.zone_pref === "any" ? "any" : "";
+        tr.innerHTML = `<td>${w.id}</td><td>${w.placement}</td>
+                        <td>${w.kind}</td>
+                        <td><span class="pill ${pillClass}">${w.zone_pref}</span></td>
+                        <td class="num">$${fmt(w.cost_hr)}</td>`;
+        wtBody.appendChild(tr);
+      }
+    }
+
+    const ul = $("unsched-list");
+    if (!d.unschedulable || d.unschedulable.length === 0) {
+      ul.innerHTML = `<span class="empty">none</span>`;
+    } else {
+      ul.innerHTML = d.unschedulable.map(u =>
+        `<div class="pill bad" style="margin: 2px 4px 2px 0;">
+          ${u.id} (${u.replicas}×, zone_pref=${u.zone_pref}) — ${u.reason}
+        </div>`).join("");
+    }
+  } catch (e) {
+    $("total-hr").textContent = "—";
+    $("total-month").textContent = "(data.json not found)";
+    console.error(e);
+  }
+}
+
+async function loadHubble() {
+  const status = $("conn-status");
+  try {
+    const r = await fetch("http://127.0.0.1:9965/metrics", {cache: "no-store",
+        mode: "cors"});
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const text = await r.text();
+    status.textContent = "hubble: connected";
+    status.className = "conn-status ok";
+    // Show the most useful counters.
+    const lines = text.split("\n").filter(l =>
+      l && !l.startsWith("#") &&
+      /^(hubble_(drop|flows_processed|dns_queries)_total|cilium_(drop|forward)_count)/.test(l)
+    );
+    $("metrics-output").textContent = lines.slice(0, 40).join("\n") || "(no matching metrics yet)";
+  } catch (e) {
+    status.textContent = "hubble: not connected";
+    status.className = "conn-status off";
+    $("metrics-output").textContent =
+      "Could not reach http://127.0.0.1:9965/metrics.\n\n" +
+      "Start a port-forward in another shell:\n" +
+      "  kubectl --context kind-platform-lab -n kube-system \\\n" +
+      "    port-forward ds/cilium 9965:9965\n";
+  }
+}
+
+// Page bootstrap
+loadCost();
+loadHubble();
+setInterval(loadCost,   30_000);
+setInterval(loadHubble, 10_000);
+</script>
+</body>
+</html>

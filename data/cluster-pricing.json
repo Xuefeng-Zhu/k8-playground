@@ -1,0 +1,40 @@
+{
+  "_comment": "Realistic-ish per-hour on-demand pricing for two simulated clusters. Used by scripts/cost-sim.py and dashboards/cost.html. Prices in USD/hour.",
+  "clusters": {
+    "on-prem-eu": {
+      "name": "on-prem (eu-central-1)",
+      "region": "eu-central-1",
+      "label": "self-managed, lower $/hr but capacity-bound",
+      "node_types": {
+        "general.large":  { "cpu": 8,  "mem_gb": 32, "gpu": 0, "price_hr": 0.18 },
+        "general.xlarge": { "cpu": 16, "mem_gb": 64, "gpu": 0, "price_hr": 0.36 },
+        "gpu.a100":       { "cpu": 32, "mem_gb": 256,"gpu": 8, "price_hr": 3.10 }
+      },
+      "capacity": {
+        "general.large":  20,
+        "general.xlarge": 8,
+        "gpu.a100":       2
+      }
+    },
+    "aws-us-east-1": {
+      "name": "aws (us-east-1)",
+      "region": "us-east-1",
+      "label": "elastic, higher $/hr but bursty",
+      "node_types": {
+        "general.large":  { "cpu": 8,  "mem_gb": 32, "gpu": 0, "price_hr": 0.40 },
+        "general.xlarge": { "cpu": 16, "mem_gb": 64, "gpu": 0, "price_hr": 0.80 },
+        "gpu.a100":       { "cpu": 32, "mem_gb": 256,"gpu": 8, "price_hr": 6.20 }
+      },
+      "capacity": {
+        "general.large":  9999,
+        "general.xlarge": 9999,
+        "gpu.a100":       9999
+      }
+    }
+  },
+  "workloads": [
+    { "id": "checkout-api",   "cpu": 4,  "mem_gb": 8,  "gpu": 0, "zone_pref": "eu", "replicas": 6, "kind": "stateless" },
+    { "id": "search-indexer", "cpu": 16, "mem_gb": 32, "gpu": 0, "zone_pref": "any", "replicas": 2, "kind": "batch"    },
+    { "id": "llm-train",      "cpu": 32, "mem_gb": 256,"gpu": 8, "zone_pref": "any", "replicas": 1, "kind": "training" }
+  ]
+}

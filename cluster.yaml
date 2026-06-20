@@ -1,0 +1,48 @@
+# k8s-platform-lab cluster topology
+#
+# Single-node kind cluster. Why single-node on this host:
+#   - This VM is 2 vCPU / 15GB RAM. Booting 3-4 simultaneous kind nodes
+#     exceeds available memory and the kubelet inside the control-plane
+#     never reaches healthy (kubelet 10248 healthz timeout).
+#   - A single-node cluster still exercises: taints, topology spread,
+#     GPU node selectors, eBPF observability, Cilium networking — all
+#     the same Kubernetes mechanisms that matter at scale.
+#   - The "multi-cloud / multi-cluster" lessons live in scripts/cost-sim.py
+#     and are not gated on having multiple kind clusters.
+#
+# The control-plane node carries:
+#   - zone=az-a label  → exercises topology spread constraints
+#   - taint gpu=true:NoSchedule  → exercises GPU-only scheduling
+#   - same workload=gpu label   → exercises nodeSelector / tolerations
+#
+# Bring-up: kind create cluster --config cluster.yaml --wait 240s
+# Tear-down: kind delete cluster --name platform-lab
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: platform-lab
+networking:
+  ipFamily: ipv4
+  # Disable default kindnet; we install Cilium ourselves (lab 03).
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.30.4
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "topology.kubernetes.io/zone=az-a,workload=gpu,gpu=true"
+            # Simulate a "GPU-only" node — only pods that explicitly
+            # tolerate this taint (and request nvidia.com/gpu) land here.
+            register-with-taints: "gpu=true:NoSchedule"
+    extraPortMappings:
+      # 28080/28443 are unprivileged ports far above the usual 8080/8443/
+      # 18080/18443 collisions on dev/CI hosts.
+      - containerPort: 28080
+        hostPort: 28080
+        protocol: TCP
+      - containerPort: 28443
+        hostPort: 28443
+        protocol: TCP
